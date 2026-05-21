@@ -1,5 +1,7 @@
 import cors from 'cors'
 import express from 'express'
+import { existsSync } from 'node:fs'
+import { join } from 'node:path'
 import { z } from 'zod'
 import type { WatchTask } from '../shared/types.js'
 import { config } from './config.js'
@@ -98,6 +100,16 @@ app.post('/api/telegram/test', async (_request, response, next) => {
     next(error)
   }
 })
+
+const clientDistPath = join(process.cwd(), 'dist')
+const clientIndexPath = join(clientDistPath, 'index.html')
+
+if (existsSync(clientIndexPath)) {
+  app.use(express.static(clientDistPath))
+  app.get(/^(?!\/api).*/, (_request, response) => {
+    response.sendFile(clientIndexPath)
+  })
+}
 
 app.use((error: unknown, _request: express.Request, response: express.Response) => {
   if (error instanceof z.ZodError) {
