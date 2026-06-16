@@ -69,7 +69,7 @@ async function tick() {
         }
       } catch (error) {
         await updateTask(task.id, {
-          status: 'error',
+          status: 'active',
           error: error instanceof Error ? error.message : 'Неизвестная ошибка проверки',
         })
       }
