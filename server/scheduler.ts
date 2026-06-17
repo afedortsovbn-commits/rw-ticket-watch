@@ -11,21 +11,24 @@ function isExpired(task: WatchTask) {
   return new Date(task.monitorUntil).getTime() <= Date.now()
 }
 
-function canNotify(task: WatchTask) {
-  if (!task.lastNotificationAt) {
+function canNotifyFailure(task: WatchTask) {
+  if (!task.lastFailureNotifiedAt) {
     return true
   }
-  return Date.now() - new Date(task.lastNotificationAt).getTime() >= config.telegramMinIntervalMs
+  return Date.now() - new Date(task.lastFailureNotifiedAt).getTime() >= config.telegramMinIntervalMs
 }
 
 function describeTask(task: WatchTask) {
-  const route = `${task.from ?? 'станция отправления'} -> ${task.to ?? 'станция прибытия'}`
+  const route =
+    task.mode === 'link'
+      ? 'по ссылке pass.rw.by'
+      : `${task.from ?? 'станция отправления'} -> ${task.to ?? 'станция прибытия'}`
   const train = task.trainNumber ? `, поезд ${task.trainNumber}` : ''
   const time = [task.timeFrom, task.timeTo].filter(Boolean).join('-')
   return `${route}${train}, ${task.date}${time ? `, ${time}` : ''}`
 }
 
-async function notify(task: WatchTask) {
+async function notifyFound(task: WatchTask) {
   const text = [
     'Появились билеты БЖД',
     describeTask(task),
@@ -36,7 +39,45 @@ async function notify(task: WatchTask) {
     .join('\n')
 
   await sendTelegramMessage(text)
-  await updateTask(task.id, { lastNotificationAt: new Date().toISOString() })
+}
+
+async function notifyFoundAndComplete(task: WatchTask) {
+  const sentCount = task.foundNotificationCount ?? 0
+  if (sentCount >= 3) {
+    return
+  }
+
+  for (let index = sentCount + 1; index <= 3; index += 1) {
+    const now = new Date().toISOString()
+    await notifyFound(task)
+    await updateTask(task.id, { foundNotificationCount: index, lastNotificationAt: now })
+    if (index < 3) {
+      await new Promise((resolve) => setTimeout(resolve, 1200))
+    }
+  }
+
+  await updateTask(task.id, {
+    status: 'completed',
+    completedAt: new Date().toISOString(),
+    foundNotificationCount: 3,
+  })
+}
+
+async function notifyFailureAfterSuccess(task: WatchTask, error: unknown) {
+  if (!task.lastHealthyAt || !canNotifyFailure(task)) {
+    return
+  }
+
+  const message = error instanceof Error ? error.message : 'Неизвестная ошибка проверки'
+  await sendTelegramMessage(
+    [
+      'Мониторинг БЖД перестал получать данные после успешного запуска.',
+      describeTask(task),
+      message,
+      'Задача остается активной, я продолжу пробовать.',
+    ].join('\n'),
+  )
+  await updateTask(task.id, { lastFailureNotifiedAt: new Date().toISOString() })
 }
 
 async function tick() {
@@ -59,13 +100,15 @@ async function tick() {
           status,
           lastCheckedAt: result.checkedAt,
           lastResult: result,
+          lastHealthyAt: result.checkedAt,
           error: undefined,
         })
 
-        if (result.hasTickets && updated && canNotify(updated)) {
-          await notify(updated)
+        if (result.hasTickets && updated) {
+          await notifyFoundAndComplete(updated)
         }
       } catch (error) {
+        await notifyFailureAfterSuccess(task, error)
         await updateTask(task.id, {
           status: 'active',
           error: error instanceof Error ? error.message : 'Неизвестная ошибка проверки',
@@ -90,13 +133,22 @@ export async function runTaskNow(id: string) {
   }
   try {
     const result = await checkTickets(task)
-    return updateTask(id, {
+    const updated = await updateTask(id, {
       status: result.hasTickets ? 'found' : 'active',
       lastCheckedAt: result.checkedAt,
       lastResult: result,
+      lastHealthyAt: result.checkedAt,
       error: undefined,
     })
+
+    if (result.hasTickets && updated) {
+      await notifyFoundAndComplete(updated)
+      return (await readTasks()).find((item) => item.id === id)
+    }
+
+    return updated
   } catch (error) {
+    await notifyFailureAfterSuccess(task, error)
     return updateTask(id, {
       status: 'active',
       error: error instanceof Error ? error.message : 'Неизвестная ошибка проверки',

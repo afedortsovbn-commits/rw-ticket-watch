@@ -15,7 +15,7 @@ app.use(cors())
 app.use(express.json())
 
 const watchSchema = z.object({
-  mode: z.enum(['route', 'train']),
+  mode: z.enum(['description', 'link', 'route', 'train']),
   from: z.string().trim().optional(),
   to: z.string().trim().optional(),
   trainNumber: z.string().trim().optional(),
@@ -26,6 +26,8 @@ const watchSchema = z.object({
   searchUrl: z.string().trim().url().optional().or(z.literal('')),
   comment: z.string().trim().optional(),
 })
+
+const runningStatuses = new Set(['active', 'paused', 'found'])
 
 app.get('/api/health', (_request, response) => {
   response.json({
@@ -47,16 +49,35 @@ app.get('/api/tasks', async (_request, response, next) => {
 app.post('/api/tasks', async (request, response, next) => {
   try {
     const input = watchSchema.parse(request.body)
+    const tasks = await readTasks()
+    const runningTask = tasks.find((task) => runningStatuses.has(task.status))
+
+    if (runningTask) {
+      response.status(409).json({ message: 'Сначала остановите текущую задачу мониторинга.' })
+      return
+    }
+
+    if (input.mode === 'link' && !input.searchUrl) {
+      response.status(400).json({ message: 'Для режима по ссылке вставьте ссылку поиска с pass.rw.by.' })
+      return
+    }
+
+    if (input.mode !== 'link' && (!input.from || !input.to)) {
+      response.status(400).json({ message: 'Для режима по описанию укажите станцию отправления и прибытия.' })
+      return
+    }
+
     const now = new Date().toISOString()
     const task: WatchTask = {
       id: crypto.randomUUID(),
       ...input,
       searchUrl: input.searchUrl || undefined,
+      mode: input.mode === 'route' || input.mode === 'train' ? 'description' : input.mode,
+      foundNotificationCount: 0,
       status: 'active',
       createdAt: now,
       updatedAt: now,
     }
-    const tasks = await readTasks()
     tasks.unshift(task)
     await writeTasks(tasks)
     response.status(201).json(task)
@@ -67,7 +88,7 @@ app.post('/api/tasks', async (request, response, next) => {
 
 app.patch('/api/tasks/:id', async (request, response, next) => {
   try {
-    const status = z.enum(['active', 'paused', 'found', 'expired', 'error']).parse(request.body.status)
+    const status = z.enum(['active', 'paused', 'found', 'completed', 'expired', 'error']).parse(request.body.status)
     const task = await updateTask(request.params.id, { status })
     if (!task) {
       response.status(404).json({ message: 'Задача не найдена' })

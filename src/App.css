@@ -47,6 +47,10 @@
   gap: 20px;
 }
 
+.workspace.single {
+  grid-template-columns: minmax(0, 820px);
+}
+
 .panel {
   background: #ffffff;
   border: 1px solid #d8e0dd;
@@ -79,6 +83,52 @@
   gap: 16px;
 }
 
+.form-section {
+  display: grid;
+  gap: 16px;
+}
+
+.mode-choice {
+  background: #edf5f2;
+  border: 1px solid #d8e0dd;
+  border-radius: 8px;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: 1fr 1fr;
+  margin: 0;
+  padding: 10px;
+}
+
+.mode-choice legend {
+  color: #41514d;
+  font-size: 14px;
+  font-weight: 700;
+  padding: 0 4px;
+}
+
+.mode-choice label {
+  align-items: center;
+  background: transparent;
+  border-radius: 7px;
+  color: #173d35;
+  cursor: pointer;
+  display: flex;
+  justify-content: center;
+  padding: 10px;
+}
+
+.mode-choice label.selected {
+  background: #ffffff;
+  box-shadow: 0 8px 18px rgba(18, 41, 36, 0.08);
+}
+
+.mode-choice input {
+  inline-size: 1px;
+  opacity: 0;
+  padding: 0;
+  position: absolute;
+}
+
 .grid {
   display: grid;
   gap: 12px;
@@ -98,6 +148,65 @@ label {
   font-size: 14px;
   font-weight: 700;
   gap: 7px;
+}
+
+.hint {
+  background: #f5f8f7;
+  border: 1px solid #d8e0dd;
+  border-radius: 7px;
+  color: #41514d;
+  font-size: 14px;
+  line-height: 1.45;
+  padding: 12px;
+}
+
+.hint a {
+  align-items: center;
+  color: #006b5f;
+  display: inline-flex;
+  font-weight: 800;
+  gap: 3px;
+}
+
+.route-grid {
+  align-items: start;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: 1fr;
+}
+
+.swap-button {
+  aspect-ratio: 1;
+  background: #f5f8f7;
+  border: 1px solid #cfd8d5;
+  color: #173d35;
+  justify-self: start;
+  width: 42px;
+}
+
+.favorites,
+.quick-dates {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.favorites span {
+  align-items: center;
+  color: #64716d;
+  display: inline-flex;
+  font-size: 13px;
+  font-weight: 700;
+  padding-right: 2px;
+}
+
+.favorites button,
+.quick-dates button {
+  background: #ffffff;
+  border: 1px solid #cfd8d5;
+  color: #173d35;
+  font-size: 13px;
+  padding: 7px 9px;
 }
 
 input {
@@ -185,6 +294,10 @@ button {
 .task-card.error {
   border-color: #d06b59;
   box-shadow: inset 4px 0 0 #d06b59;
+}
+
+.task-card.completed {
+  border-color: #2f9f76;
 }
 
 .task-card__main {

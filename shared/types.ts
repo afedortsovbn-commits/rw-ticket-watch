@@ -1,6 +1,6 @@
-export type WatchStatus = 'active' | 'paused' | 'found' | 'expired' | 'error'
+export type WatchStatus = 'active' | 'paused' | 'found' | 'completed' | 'expired' | 'error'
 
-export type WatchMode = 'route' | 'train'
+export type WatchMode = 'description' | 'link' | 'route' | 'train'
 
 export interface WatchInput {
   mode: WatchMode
@@ -13,6 +13,10 @@ export interface WatchInput {
   monitorUntil: string
   searchUrl?: string
   comment?: string
+  foundNotificationCount?: number
+  lastHealthyAt?: string
+  lastFailureNotifiedAt?: string
+  completedAt?: string
 }
 
 export interface CheckResult {
