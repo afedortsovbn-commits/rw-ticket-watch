@@ -21,21 +21,26 @@ const execFileAsync = promisify(execFile)
 const knownStations: Record<string, StationSuggestion> = {
   'минск-пассажирский': { value: 'Минск-Пассажирский', exp: '2100001', ecp: '140210' },
   'брест-центральный': { value: 'Брест-Центральный', exp: '2100035', ecp: '130007' },
+  'гомель': { value: 'Гомель', exp: '2100100', ecp: '150000' },
+  'гомель-пассажирский': { value: 'Гомель-Пассажирский', exp: '2100100', ecp: '150000' },
 }
 
 function normalize(value = '') {
   return value.trim().replace(/\s+/g, ' ')
 }
 
-async function fetchViaPowerShell(url: string, accept: string) {
+async function fetchViaPowerShell(url: string, headers: Record<string, string>) {
   const psUrl = url.replace(/'/g, "''")
-  const psAccept = accept.replace(/'/g, "''")
+  const psAccept = (headers.Accept ?? headers.accept ?? '*/*').replace(/'/g, "''")
+  const psCookie = (headers.Cookie ?? headers.cookie ?? '').replace(/'/g, "''")
   const script = [
     `$Url = '${psUrl}';`,
     `$Accept = '${psAccept}';`,
+    `$Cookie = '${psCookie}';`,
     '$ProgressPreference = "SilentlyContinue";',
     '[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12;',
     '$headers = @{ "User-Agent" = "Mozilla/5.0"; "Accept" = $Accept; "X-Requested-With" = "XMLHttpRequest" };',
+    'if ($Cookie.Length -gt 0) { $headers["Cookie"] = $Cookie };',
     '$response = Invoke-WebRequest -UseBasicParsing -Headers $headers -Uri $Url;',
     'Write-Output $response.Content;',
   ].join(' ')
@@ -62,12 +67,42 @@ async function fetchWithRetry(url: string, init: RequestInit = {}, attempts = 3)
 
   const message = lastError instanceof Error ? lastError.message : 'неизвестная сетевая ошибка'
   if (process.platform === 'win32') {
-    const headers = init.headers as Record<string, string> | undefined
-    const accept = headers?.Accept ?? headers?.accept ?? '*/*'
-    const text = await fetchViaPowerShell(url, accept)
+    const headers = (init.headers as Record<string, string> | undefined) ?? {}
+    const text = await fetchViaPowerShell(url, headers)
     return new Response(text, { status: 200 })
   }
   throw new Error(`Не удалось подключиться к pass.rw.by после ${attempts} попыток: ${message}`)
+}
+
+function getVerificationCookie(html: string) {
+  if (!html.includes('<title>Verification</title>') && !html.includes('hg-security=')) {
+    return undefined
+  }
+  return html.match(/hg-security=([^;"]+)/)?.[1]
+}
+
+async function fetchTextWithVerificationRetry(url: string, headers: Record<string, string>) {
+  const response = await fetchWithRetry(url, { headers })
+  const text = await response.text()
+  const cookie = getVerificationCookie(text)
+
+  if (!cookie) {
+    return { response, text }
+  }
+
+  const retryResponse = await fetchWithRetry(url, {
+    headers: {
+      ...headers,
+      Cookie: `hg-security=${cookie}`,
+    },
+  })
+  const retryText = await retryResponse.text()
+
+  if (getVerificationCookie(retryText)) {
+    throw new Error('pass.rw.by вернул страницу проверки доступа вместо данных. Откройте сайт БЖД в браузере или попробуйте позже.')
+  }
+
+  return { response: retryResponse, text: retryText }
 }
 
 async function lookupStation(query: string): Promise<StationSuggestion> {
@@ -76,14 +111,12 @@ async function lookupStation(query: string): Promise<StationSuggestion> {
     return known
   }
 
-  const response = await fetchWithRetry(
+  const { response, text: raw } = await fetchTextWithVerificationRetry(
     `https://pass.rw.by/ru/ajax/autocomplete/search/?term=${encodeURIComponent(query)}`,
     {
-      headers: {
-        ...requestHeaders,
-        Accept: 'application/json,text/javascript,*/*;q=0.8',
-        'X-Requested-With': 'XMLHttpRequest',
-      },
+      ...requestHeaders,
+      Accept: 'application/json,text/javascript,*/*;q=0.8',
+      'X-Requested-With': 'XMLHttpRequest',
     },
   )
 
@@ -91,7 +124,11 @@ async function lookupStation(query: string): Promise<StationSuggestion> {
     throw new Error(`Не удалось найти станцию "${query}": pass.rw.by вернул HTTP ${response.status}`)
   }
 
-  const suggestions = (await response.json()) as StationSuggestion[]
+  if (raw.trim().startsWith('<')) {
+    throw new Error(`pass.rw.by вернул страницу проверки вместо справочника станции "${query}". Попробуйте точную ссылку поиска или добавьте станцию в словарь.`)
+  }
+
+  const suggestions = JSON.parse(raw) as StationSuggestion[]
   const exact = suggestions.find((station) => station.value.toLowerCase() === query.toLowerCase())
   const station = exact ?? suggestions[0]
 
@@ -151,15 +188,12 @@ function containsTimeWindow(text: string, task: WatchTask) {
 
 export async function checkTickets(task: WatchTask): Promise<CheckResult> {
   const sourceUrl = await buildSearchUrl(task)
-  const response = await fetchWithRetry(sourceUrl, {
-    headers: requestHeaders,
-  })
+  const { response, text: html } = await fetchTextWithVerificationRetry(sourceUrl, requestHeaders)
 
   if (!response.ok) {
     throw new Error(`pass.rw.by вернул HTTP ${response.status}`)
   }
 
-  const html = await response.text()
   const text = normalize(stripTags(html))
   const matches = ticketSignals.filter((signal) => text.includes(signal))
   const soldOutMatches = soldOutSignals.filter((signal) => text.includes(signal))
