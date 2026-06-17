@@ -2,8 +2,16 @@ import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import type { CheckResult, WatchTask } from '../shared/types.js'
 
-const ticketSignals = ['Выбрать места', 'Свободные места', 'Свободно мест', 'Купить билет']
+const ticketSignals = [
+  'Выбрать места',
+  'Выбрать место',
+  'Свободные места',
+  'Свободно мест',
+  'Купить билет',
+  'Оформить заказ',
+]
 const soldOutSignals = ['Мест нет', 'Нет мест', 'Продажа закрыта', 'свободных мест нет']
+const routePageSignals = ['sch-table', 'Маршрут', 'Время отправления', 'Время прибытия', 'Выбрать места', 'Мест нет']
 
 type StationSuggestion = {
   value: string
@@ -18,6 +26,7 @@ const requestHeaders = {
 }
 
 const execFileAsync = promisify(execFile)
+const requestTimeoutMs = 7000
 const knownStations: Record<string, StationSuggestion> = {
   'минск-пассажирский': { value: 'Минск-Пассажирский', exp: '2100001', ecp: '140210' },
   'брест-центральный': { value: 'Брест-Центральный', exp: '2100035', ecp: '130007' },
@@ -74,30 +83,41 @@ async function fetchViaPowerShell(url: string, headers: Record<string, string>) 
   ].join(' ')
   const { stdout } = await execFileAsync('powershell.exe', ['-NoProfile', '-Command', script], {
     maxBuffer: 15 * 1024 * 1024,
+    timeout: requestTimeoutMs,
     windowsHide: true,
   })
   return stdout
 }
 
-async function fetchWithRetry(url: string, init: RequestInit = {}, attempts = 3) {
+async function fetchWithRetry(url: string, init: RequestInit = {}, attempts = 1) {
   let lastError: unknown
 
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), requestTimeoutMs)
     try {
-      return await fetch(url, init)
+      return await fetch(url, { ...init, signal: controller.signal })
     } catch (error) {
       lastError = error
       if (attempt < attempts) {
         await new Promise((resolve) => setTimeout(resolve, 700 * attempt))
       }
+    } finally {
+      clearTimeout(timeout)
     }
   }
 
   const message = lastError instanceof Error ? lastError.message : 'неизвестная сетевая ошибка'
   if (process.platform === 'win32') {
     const headers = (init.headers as Record<string, string> | undefined) ?? {}
-    const text = await fetchViaPowerShell(url, headers)
-    return new Response(text, { status: 200 })
+    try {
+      const text = await fetchViaPowerShell(url, headers)
+      return new Response(text, { status: 200 })
+    } catch {
+      throw new Error(
+        `pass.rw.by не ответил за ${Math.round(requestTimeoutMs / 1000)} секунд. Это похоже на блокировку или зависание соединения, мониторинг продолжит попытки.`,
+      )
+    }
   }
   throw new Error(`Не удалось подключиться к pass.rw.by после ${attempts} попыток: ${message}`)
 }
@@ -199,6 +219,20 @@ function stripTags(html: string) {
     .replace(/&#039;/g, "'")
 }
 
+function assertLooksLikeRoutePage(html: string, text: string) {
+  if (routePageSignals.some((signal) => html.includes(signal) || text.includes(signal))) {
+    return
+  }
+
+  if (html.includes('<title>Verification</title>') || html.includes('hg-security=')) {
+    throw new Error('pass.rw.by вернул страницу проверки доступа вместо списка поездов. Мониторинг продолжит попытки.')
+  }
+
+  throw new Error(
+    'Я получил ответ pass.rw.by, но не распознал в нем страницу со списком поездов. Не буду считать это отсутствием мест.',
+  )
+}
+
 function containsTimeWindow(text: string, task: WatchTask) {
   if (!task.timeFrom && !task.timeTo) {
     return true
@@ -228,6 +262,8 @@ export async function checkTickets(task: WatchTask): Promise<CheckResult> {
   }
 
   const text = normalize(stripTags(html))
+  assertLooksLikeRoutePage(html, text)
+
   const matches = ticketSignals.filter((signal) => text.includes(signal))
   const soldOutMatches = soldOutSignals.filter((signal) => text.includes(signal))
   const trainMatches = task.trainNumber && text.includes(task.trainNumber) ? [task.trainNumber] : []
