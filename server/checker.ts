@@ -25,6 +25,34 @@ const knownStations: Record<string, StationSuggestion> = {
   'гомель-пассажирский': { value: 'Гомель-Пассажирский', exp: '2100100', ecp: '150000' },
 }
 
+async function normalizePassSearchUrl(rawUrl: string) {
+  const url = new URL(rawUrl)
+
+  if (!url.hostname.endsWith('pass.rw.by') || !url.pathname.includes('/route/')) {
+    return rawUrl
+  }
+
+  for (const field of ['from', 'to'] as const) {
+    const stationName = url.searchParams.get(field)
+    const expParam = `${field}_exp`
+    const esrParam = `${field}_esr`
+    const exp = url.searchParams.get(expParam)
+
+    if (!stationName || (exp && exp !== '0')) {
+      continue
+    }
+
+    const station = await lookupStation(stationName)
+    url.searchParams.set(field, station.value)
+    url.searchParams.set(expParam, station.exp)
+    if (station.ecp) {
+      url.searchParams.set(esrParam, station.ecp)
+    }
+  }
+
+  return url.toString()
+}
+
 function normalize(value = '') {
   return value.trim().replace(/\s+/g, ' ')
 }
@@ -141,7 +169,7 @@ async function lookupStation(query: string): Promise<StationSuggestion> {
 
 async function buildSearchUrl(task: WatchTask) {
   if (task.searchUrl?.trim()) {
-    return task.searchUrl.trim()
+    return normalizePassSearchUrl(task.searchUrl.trim())
   }
 
   if (!task.from || !task.to) {
