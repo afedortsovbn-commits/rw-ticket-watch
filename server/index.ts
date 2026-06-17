@@ -28,6 +28,8 @@ const watchSchema = z.object({
 })
 
 const runningStatuses = new Set(['active', 'paused', 'found'])
+let isCreatingTask = false
+const createTokens = new Set<string>()
 
 app.get('/api/health', (_request, response) => {
   response.json({
@@ -36,6 +38,12 @@ app.get('/api/health', (_request, response) => {
     checkIntervalMs: config.checkIntervalMs,
     telegramMinIntervalMs: config.telegramMinIntervalMs,
   })
+})
+
+app.get('/api/session', (_request, response) => {
+  const createToken = crypto.randomUUID()
+  createTokens.add(createToken)
+  response.json({ createToken })
 })
 
 app.get('/api/tasks', async (_request, response, next) => {
@@ -48,6 +56,17 @@ app.get('/api/tasks', async (_request, response, next) => {
 
 app.post('/api/tasks', async (request, response, next) => {
   try {
+    if (isCreatingTask) {
+      response.status(409).json({ message: 'Задача уже создается. Подождите пару секунд.' })
+      return
+    }
+    isCreatingTask = true
+    const createToken = z.string().uuid().parse(request.body.createToken)
+    if (!createTokens.delete(createToken)) {
+      response.status(409).json({ message: 'Форма устарела. Обновите страницу и запустите мониторинг еще раз.' })
+      return
+    }
+
     const input = watchSchema.parse(request.body)
     const tasks = await readTasks()
     const runningTask = tasks.find((task) => runningStatuses.has(task.status))
@@ -81,6 +100,28 @@ app.post('/api/tasks', async (request, response, next) => {
     tasks.unshift(task)
     await writeTasks(tasks)
     response.status(201).json(task)
+  } catch (error) {
+    next(error)
+  } finally {
+    isCreatingTask = false
+  }
+})
+
+app.post('/api/tasks/stop-running', async (_request, response, next) => {
+  try {
+    const now = new Date().toISOString()
+    const tasks = await readTasks()
+    const updatedTasks = tasks.map((task) =>
+      runningStatuses.has(task.status)
+        ? {
+            ...task,
+            status: 'expired' as const,
+            updatedAt: now,
+          }
+        : task,
+    )
+    await writeTasks(updatedTasks)
+    response.json({ stopped: tasks.filter((task) => runningStatuses.has(task.status)).length })
   } catch (error) {
     next(error)
   }
@@ -132,7 +173,8 @@ if (existsSync(clientIndexPath)) {
   })
 }
 
-app.use((error: unknown, _request: express.Request, response: express.Response) => {
+app.use((error: unknown, _request: express.Request, response: express.Response, next: express.NextFunction) => {
+  void next
   if (error instanceof z.ZodError) {
     response.status(400).json({ message: 'Проверьте поля формы', details: error.issues })
     return

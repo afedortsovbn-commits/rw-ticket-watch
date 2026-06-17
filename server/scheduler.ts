@@ -11,6 +11,14 @@ function isExpired(task: WatchTask) {
   return new Date(task.monitorUntil).getTime() <= Date.now()
 }
 
+function isRunnableStatus(task?: WatchTask) {
+  return task?.status === 'active' || task?.status === 'found'
+}
+
+async function readCurrentTask(id: string) {
+  return (await readTasks()).find((item) => item.id === id)
+}
+
 function canNotifyFailure(task: WatchTask) {
   if (!task.lastFailureNotifiedAt) {
     return true
@@ -95,6 +103,10 @@ async function tick() {
 
       try {
         const result = await checkTickets(task)
+        const currentTask = await readCurrentTask(task.id)
+        if (!isRunnableStatus(currentTask)) {
+          continue
+        }
         const status = result.hasTickets ? 'found' : 'active'
         const updated = await updateTask(task.id, {
           status,
@@ -108,6 +120,10 @@ async function tick() {
           await notifyFoundAndComplete(updated)
         }
       } catch (error) {
+        const currentTask = await readCurrentTask(task.id)
+        if (!isRunnableStatus(currentTask)) {
+          continue
+        }
         await notifyFailureAfterSuccess(task, error)
         await updateTask(task.id, {
           status: 'active',
@@ -127,12 +143,19 @@ export function startScheduler() {
 }
 
 export async function runTaskNow(id: string) {
-  const task = (await readTasks()).find((item) => item.id === id)
+  const task = await readCurrentTask(id)
   if (!task) {
     return undefined
   }
+  if (!isRunnableStatus(task)) {
+    return task
+  }
   try {
     const result = await checkTickets(task)
+    const currentTask = await readCurrentTask(id)
+    if (!isRunnableStatus(currentTask)) {
+      return currentTask
+    }
     const updated = await updateTask(id, {
       status: result.hasTickets ? 'found' : 'active',
       lastCheckedAt: result.checkedAt,
@@ -148,6 +171,10 @@ export async function runTaskNow(id: string) {
 
     return updated
   } catch (error) {
+    const currentTask = await readCurrentTask(id)
+    if (!isRunnableStatus(currentTask)) {
+      return currentTask
+    }
     await notifyFailureAfterSuccess(task, error)
     return updateTask(id, {
       status: 'active',

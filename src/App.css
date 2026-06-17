@@ -52,7 +52,7 @@
 .main-panel {
   display: grid;
   gap: 16px;
-  max-width: 860px;
+  width: 100%;
 }
 
 .panel__title,
@@ -143,6 +143,10 @@
   grid-template-columns: 1.1fr 0.9fr 0.9fr;
 }
 
+.grid.schedule {
+  grid-template-columns: minmax(180px, 0.9fr) minmax(140px, 0.7fr) minmax(140px, 0.7fr);
+}
+
 label {
   color: #41514d;
   display: grid;
@@ -172,8 +176,9 @@ label {
 .route-grid {
   align-items: start;
   display: grid;
-  gap: 10px;
-  grid-template-columns: 1fr;
+  gap: 12px;
+  grid-template-columns: minmax(220px, 0.8fr) 42px minmax(220px, 0.8fr);
+  max-width: 980px;
 }
 
 .swap-button {
@@ -214,6 +219,8 @@ input {
   border-radius: 7px;
   color: #122923;
   font: inherit;
+  box-sizing: border-box;
+  height: 48px;
   min-width: 0;
   padding: 11px 12px;
 }
@@ -256,6 +263,12 @@ button {
   padding: 10px 12px;
 }
 
+.danger {
+  background: #fff6f4;
+  border: 1px solid #d06b59;
+  color: #9c2f22;
+}
+
 .primary:disabled {
   cursor: progress;
   opacity: 0.65;
@@ -293,6 +306,19 @@ button {
 .task-card.found {
   border-color: #2f9f76;
   box-shadow: inset 4px 0 0 #2f9f76;
+}
+
+.task-card.active .badge,
+.task-card.found .badge {
+  background: #007c69;
+  border-color: #007c69;
+  color: #ffffff;
+}
+
+.task-card.paused .badge {
+  background: #fff7df;
+  border-color: #ebd99d;
+  color: #5d4810;
 }
 
 .task-card.error {
@@ -391,7 +417,9 @@ button {
 
 @media (max-width: 620px) {
   .grid.two,
-  .grid.three {
+  .grid.three,
+  .grid.schedule,
+  .route-grid {
     grid-template-columns: 1fr;
   }
 

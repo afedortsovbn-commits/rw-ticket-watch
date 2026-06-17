@@ -6,9 +6,6 @@ import {
   CheckCircle2,
   Clock3,
   ExternalLink,
-  Pause,
-  Play,
-  RefreshCw,
   Search,
   Send,
   Square,
@@ -22,6 +19,10 @@ type Health = {
   telegramConfigured: boolean
   checkIntervalMs: number
   telegramMinIntervalMs: number
+}
+
+type Session = {
+  createToken: string
 }
 
 type FormState = {
@@ -125,19 +126,27 @@ function App() {
   const [form, setForm] = useState<FormState>(() => defaultForm())
   const [message, setMessage] = useState('')
   const [busy, setBusy] = useState(false)
+  const [createToken, setCreateToken] = useState('')
 
-  const runningTask = useMemo(
-    () => tasks.find((task) => task.status === 'active' || task.status === 'paused' || task.status === 'found'),
+  const runningTasks = useMemo(
+    () => tasks.filter((task) => task.status === 'active' || task.status === 'paused' || task.status === 'found'),
     [tasks],
   )
 
+  const runningTask = useMemo(
+    () => runningTasks[0],
+    [runningTasks],
+  )
+
   async function loadData() {
-    const [nextTasks, nextHealth] = await Promise.all([
+    const [nextTasks, nextHealth, nextSession] = await Promise.all([
       api<WatchTask[]>('/api/tasks'),
       api<Health>('/api/health'),
+      api<Session>('/api/session'),
     ])
     setTasks(nextTasks)
     setHealth(nextHealth)
+    setCreateToken(nextSession.createToken)
   }
 
   useEffect(() => {
@@ -178,8 +187,12 @@ function App() {
     updateForm({ from: form.to, to: form.from })
   }
 
-  async function createTask(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault()
+  async function createTask() {
+    if (busy || runningTask) return
+    if (!createToken) {
+      setMessage('Форма еще загружается. Подождите пару секунд.')
+      return
+    }
     setBusy(true)
     setMessage('')
     try {
@@ -194,6 +207,7 @@ function App() {
               timeTo: prepared.timeTo || undefined,
               monitorUntil: prepared.monitorUntil,
               searchUrl: prepared.searchUrl,
+              createToken,
             }
           : {
               mode: 'description',
@@ -204,6 +218,7 @@ function App() {
               timeFrom: prepared.timeFrom || undefined,
               timeTo: prepared.timeTo || undefined,
               monitorUntil: prepared.monitorUntil,
+              createToken,
             }
 
       await api<WatchTask>('/api/tasks', {
@@ -211,7 +226,6 @@ function App() {
         body: JSON.stringify(payload),
       })
       setForm((current) => ({ ...defaultForm(), date: current.date }))
-      setMessage('Задача добавлена. Мониторинг уже запущен.')
       await loadData()
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'Не удалось добавить задачу')
@@ -220,21 +234,13 @@ function App() {
     }
   }
 
-  async function setStatus(task: WatchTask, status: WatchTask['status']) {
-    await api<WatchTask>(`/api/tasks/${task.id}`, {
-      method: 'PATCH',
-      body: JSON.stringify({ status }),
-    })
-    await loadData()
-  }
-
-  async function checkNow(task: WatchTask) {
+  async function stopRunningTasks() {
     setMessage('')
     try {
-      await api<WatchTask>(`/api/tasks/${task.id}/check`, { method: 'POST' })
+      await api<{ stopped: number }>('/api/tasks/stop-running', { method: 'POST' })
       await loadData()
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : 'Проверка не удалась')
+      setMessage(error instanceof Error ? error.message : 'Не удалось остановить мониторинг')
     }
   }
 
@@ -253,10 +259,10 @@ function App() {
       <section className="topbar">
         <div>
           <p className="eyebrow">Монитор билетов БЖД</p>
-          <h1>Проверка свободных мест без лишнего шума</h1>
+          <h1>Проверка свободных мест</h1>
         </div>
         <div className="topbar__status">
-          <span>{runningTask ? '1 активная задача' : 'нет активных задач'}</span>
+          <span>{runningTasks.length ? `${runningTasks.length} активн.` : 'нет активных задач'}</span>
           <span>{health?.telegramConfigured ? 'Telegram подключен' : 'Telegram не настроен'}</span>
         </div>
       </section>
@@ -272,11 +278,8 @@ function App() {
                   <Train size={20} />
                   <h2>Текущая задача</h2>
                 </div>
-                <p>Чтобы выбрать другой маршрут, остановите эту задачу.</p>
+                <p>Проверка идет автоматически раз в 3 секунды. Чтобы выбрать другой маршрут, остановите мониторинг.</p>
               </div>
-              <button className="icon-button" type="button" onClick={() => void loadData()} aria-label="Обновить">
-                <RefreshCw size={18} />
-              </button>
             </div>
 
             <article className={`task-card ${runningTask.status}`}>
@@ -313,34 +316,15 @@ function App() {
               </p>
 
               <div className="actions">
-                <button type="button" onClick={() => void checkNow(runningTask)}>
-                  <RefreshCw size={16} />
-                  Проверить
-                </button>
-                {runningTask.status === 'paused' ? (
-                  <button type="button" onClick={() => void setStatus(runningTask, 'active')}>
-                    <Play size={16} />
-                    Продолжить
-                  </button>
-                ) : (
-                  <button type="button" onClick={() => void setStatus(runningTask, 'paused')}>
-                    <Pause size={16} />
-                    Пауза
-                  </button>
-                )}
-                <button type="button" onClick={() => void setStatus(runningTask, 'expired')}>
+                <button className="danger" type="button" onClick={() => void stopRunningTasks()}>
                   <Square size={16} />
                   Остановить
-                </button>
-                <button className="secondary compact" type="button" onClick={() => void testTelegram()}>
-                  <Send size={16} />
-                  Проверить Telegram
                 </button>
               </div>
             </article>
           </section>
         ) : (
-          <form className="form-panel" onSubmit={createTask}>
+          <section className="form-panel">
             <div className="panel__title split">
               <div className="title-row">
                 <Search size={20} />
@@ -389,7 +373,7 @@ function App() {
                   />
                 </label>
 
-                <div className="grid three">
+                <div className="grid schedule">
                   <label>
                     Номер поезда
                     <input
@@ -461,7 +445,7 @@ function App() {
                   />
                 </label>
 
-                <div className="grid three">
+                <div className="grid schedule">
                   <label>
                     Дата
                     <input type="date" value={form.date} onChange={(event) => updateForm({ date: event.target.value })} required />
@@ -499,11 +483,11 @@ function App() {
               </section>
             )}
 
-            <button className="primary" type="submit" disabled={busy}>
+            <button className="primary" type="button" disabled={busy} onClick={() => void createTask()}>
               <Bell size={18} />
               Запустить мониторинг
             </button>
-          </form>
+          </section>
         )}
       </section>
     </main>
