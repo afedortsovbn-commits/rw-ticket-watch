@@ -221,7 +221,7 @@ export async function checkTickets(task: WatchTask): Promise<CheckResult> {
   if (!response.ok) {
     if (response.status === 403) {
       throw new Error(
-        'pass.rw.by отклонил автоматическую проверку с HTTP 403. Это защита сайта, а не ошибка маршрута. Попробуем решить через локальный браузерный режим.',
+        'pass.rw.by сейчас отклонил автоматическую проверку с HTTP 403. Это похоже на временную защиту сайта, а не на ошибку маршрута. Мониторинг продолжит попытки; если 403 повторяется постоянно, нужен локальный браузерный режим.',
       )
     }
     throw new Error(`pass.rw.by вернул HTTP ${response.status}`)
