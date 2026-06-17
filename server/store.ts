@@ -12,7 +12,7 @@ export async function readTasks(): Promise<WatchTask[]> {
   await ensureDb()
   try {
     const raw = await readFile(dbPath, 'utf8')
-    return JSON.parse(raw) as WatchTask[]
+    return JSON.parse(raw.replace(/^\uFEFF/, '')) as WatchTask[]
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
       return []
