@@ -44,18 +44,27 @@ function localDate(offsetDays = 0) {
   return date.toISOString().slice(0, 10)
 }
 
+function monitorUntil(date: string, timeTo = '23:59') {
+  return `${date}T${timeTo || '23:59'}`
+}
+
 function defaultForm(): FormState {
+  const date = localDate()
   return {
     mode: 'description',
     from: 'Минск-Пассажирский',
     to: 'Брест-Центральный',
     trainNumber: '',
-    date: localDate(),
-    timeFrom: '',
-    timeTo: '',
-    monitorUntil: '',
+    date,
+    timeFrom: '00:00',
+    timeTo: '23:59',
+    monitorUntil: monitorUntil(date),
     searchUrl: '',
   }
+}
+
+function stationShortName(station: string) {
+  return station.replace('-Пассажирский', '').replace('-Центральный', '')
 }
 
 function statusText(task: WatchTask) {
@@ -92,8 +101,8 @@ function dateFromSearchUrl(url: string) {
 
 function withMonitorDefault(form: FormState) {
   const date = dateFromSearchUrl(form.searchUrl) ?? form.date
-  if (!form.monitorUntil && form.timeTo) {
-    return { ...form, monitorUntil: `${date}T${form.timeTo}` }
+  if (!form.monitorUntil) {
+    return { ...form, monitorUntil: monitorUntil(date, form.timeTo) }
   }
   return form
 }
@@ -143,15 +152,22 @@ function App() {
   function updateForm(patch: Partial<FormState>) {
     setForm((current) => {
       const next = { ...current, ...patch }
-      if (patch.timeTo && !current.monitorUntil) {
-        const date = dateFromSearchUrl(next.searchUrl) ?? next.date
-        next.monitorUntil = `${date}T${patch.timeTo}`
+      const wasAutoMonitor = current.monitorUntil === monitorUntil(current.date, current.timeTo)
+
+      if ((patch.date || patch.timeTo) && wasAutoMonitor) {
+        next.monitorUntil = monitorUntil(next.date, next.timeTo)
       }
-      if (patch.date && current.timeTo && current.monitorUntil === `${current.date}T${current.timeTo}`) {
-        next.monitorUntil = `${patch.date}T${current.timeTo}`
+
+      if (patch.searchUrl && next.mode === 'link' && wasAutoMonitor) {
+        next.monitorUntil = monitorUntil(dateFromSearchUrl(patch.searchUrl) ?? next.date, next.timeTo)
       }
+
       return next
     })
+  }
+
+  function setDate(offsetDays: number) {
+    updateForm({ date: localDate(offsetDays) })
   }
 
   function setStation(field: 'from' | 'to', station: string) {
@@ -245,183 +261,24 @@ function App() {
         </div>
       </section>
 
-      <section className={`workspace ${runningTask ? 'single' : ''}`}>
-        {!runningTask && (
-          <form className="panel form-panel" onSubmit={createTask}>
-            <div className="panel__title">
-              <Search size={20} />
-              <h2>Новая проверка</h2>
-            </div>
+      <section className="panel main-panel">
+        {message && <div className="notice">{message}</div>}
 
-            <fieldset className="mode-choice">
-              <legend>Как задать поиск</legend>
-              <label className={form.mode === 'description' ? 'selected' : ''}>
-                <input
-                  type="radio"
-                  checked={form.mode === 'description'}
-                  onChange={() => updateForm({ mode: 'description' })}
-                />
-                По описанию
-              </label>
-              <label className={form.mode === 'link' ? 'selected' : ''}>
-                <input type="radio" checked={form.mode === 'link'} onChange={() => updateForm({ mode: 'link' })} />
-                По ссылке
-              </label>
-            </fieldset>
-
-            {form.mode === 'link' ? (
-              <section className="form-section">
-                <p className="hint">
-                  Откройте{' '}
-                  <a href="https://pass.rw.by/ru/" target="_blank" rel="noreferrer">
-                    сайт БЖД <ExternalLink size={14} />
-                  </a>
-                  , выберите маршрут и дату, затем вставьте ссылку страницы с перечнем поездов. Обычно в ней уже есть
-                  маршрут и дата.
-                </p>
-
-                <label>
-                  Ссылка поиска
-                  <input
-                    value={form.searchUrl}
-                    onChange={(event) => updateForm({ searchUrl: event.target.value })}
-                    placeholder="https://pass.rw.by/ru/route/?from=..."
-                    required
-                  />
-                </label>
-
-                <div className="grid two">
-                  <label>
-                    Номер поезда
-                    <input
-                      value={form.trainNumber}
-                      onChange={(event) => updateForm({ trainNumber: event.target.value })}
-                      placeholder="Необязательно"
-                    />
-                  </label>
-                  <label>
-                    Время до
-                    <input type="time" value={form.timeTo} onChange={(event) => updateForm({ timeTo: event.target.value })} />
-                  </label>
+        {runningTask ? (
+          <section className="task-view">
+            <div className="panel__title split">
+              <div>
+                <div className="title-row">
+                  <Train size={20} />
+                  <h2>Текущая задача</h2>
                 </div>
-
-                <label>
-                  Мониторить до
-                  <input
-                    type="datetime-local"
-                    value={form.monitorUntil}
-                    onChange={(event) => updateForm({ monitorUntil: event.target.value })}
-                    required
-                  />
-                </label>
-              </section>
-            ) : (
-              <section className="form-section">
-                <div className="route-grid">
-                  <label>
-                    Откуда
-                    <input value={form.from} onChange={(event) => updateForm({ from: event.target.value })} required />
-                  </label>
-                  <button className="swap-button" type="button" onClick={swapStations} aria-label="Поменять местами">
-                    <ArrowLeftRight size={18} />
-                  </button>
-                  <label>
-                    Куда
-                    <input value={form.to} onChange={(event) => updateForm({ to: event.target.value })} required />
-                  </label>
-                </div>
-
-                <div className="favorites">
-                  <span>Быстро:</span>
-                  {stationFavorites.map((station) => (
-                    <button key={`from-${station}`} type="button" onClick={() => setStation('from', station)}>
-                      из {station.replace('-Пассажирский', '').replace('-Центральный', '')}
-                    </button>
-                  ))}
-                  {stationFavorites.map((station) => (
-                    <button key={`to-${station}`} type="button" onClick={() => setStation('to', station)}>
-                      в {station.replace('-Пассажирский', '').replace('-Центральный', '')}
-                    </button>
-                  ))}
-                </div>
-
-                <label>
-                  Номер поезда
-                  <input
-                    value={form.trainNumber}
-                    onChange={(event) => updateForm({ trainNumber: event.target.value })}
-                    placeholder="Необязательно, например 701Б"
-                  />
-                </label>
-
-                <div className="quick-dates">
-                  <button type="button" onClick={() => updateForm({ date: localDate(0) })}>
-                    Сегодня
-                  </button>
-                  <button type="button" onClick={() => updateForm({ date: localDate(1) })}>
-                    Завтра
-                  </button>
-                  <button type="button" onClick={() => updateForm({ date: localDate(2) })}>
-                    Послезавтра
-                  </button>
-                </div>
-
-                <div className="grid three">
-                  <label>
-                    Дата
-                    <input type="date" value={form.date} onChange={(event) => updateForm({ date: event.target.value })} required />
-                  </label>
-                  <label>
-                    Время от
-                    <input type="time" value={form.timeFrom} onChange={(event) => updateForm({ timeFrom: event.target.value })} />
-                  </label>
-                  <label>
-                    Время до
-                    <input type="time" value={form.timeTo} onChange={(event) => updateForm({ timeTo: event.target.value })} />
-                  </label>
-                </div>
-
-                <label>
-                  Мониторить до
-                  <input
-                    type="datetime-local"
-                    value={form.monitorUntil}
-                    onChange={(event) => updateForm({ monitorUntil: event.target.value })}
-                    required
-                  />
-                </label>
-              </section>
-            )}
-
-            <button className="primary" type="submit" disabled={busy}>
-              <Bell size={18} />
-              Запустить мониторинг
-            </button>
-          </form>
-        )}
-
-        <section className="panel tasks-panel">
-          <div className="panel__title split">
-            <div>
-              <div className="title-row">
-                <Train size={20} />
-                <h2>{runningTask ? 'Текущая задача' : 'Состояние'}</h2>
+                <p>Чтобы выбрать другой маршрут, остановите эту задачу.</p>
               </div>
-              <p>Проверка выполняется раз в 3 секунды. При находке придут 3 уведомления подряд.</p>
+              <button className="icon-button" type="button" onClick={() => void loadData()} aria-label="Обновить">
+                <RefreshCw size={18} />
+              </button>
             </div>
-            <button className="icon-button" type="button" onClick={() => void loadData()} aria-label="Обновить">
-              <RefreshCw size={18} />
-            </button>
-          </div>
 
-          {message && <div className="notice">{message}</div>}
-
-          <button className="secondary" type="button" onClick={() => void testTelegram()}>
-            <Send size={18} />
-            Проверить Telegram
-          </button>
-
-          {runningTask ? (
             <article className={`task-card ${runningTask.status}`}>
               <div className="task-card__main">
                 <span className="badge">{statusText(runningTask)}</span>
@@ -475,14 +332,179 @@ function App() {
                   <Square size={16} />
                   Остановить
                 </button>
+                <button className="secondary compact" type="button" onClick={() => void testTelegram()}>
+                  <Send size={16} />
+                  Проверить Telegram
+                </button>
               </div>
             </article>
-          ) : (
-            <div className="empty">
-              Активной задачи нет. Выберите поиск слева: по описанию маршрута или по готовой ссылке с сайта БЖД.
+          </section>
+        ) : (
+          <form className="form-panel" onSubmit={createTask}>
+            <div className="panel__title split">
+              <div className="title-row">
+                <Search size={20} />
+                <h2>Новая проверка</h2>
+              </div>
+              <button className="secondary compact" type="button" onClick={() => void testTelegram()}>
+                <Send size={16} />
+                Проверить Telegram
+              </button>
             </div>
-          )}
-        </section>
+
+            <fieldset className="mode-choice">
+              <legend>Как задать поиск</legend>
+              <label className={form.mode === 'description' ? 'selected' : ''}>
+                <input
+                  type="radio"
+                  checked={form.mode === 'description'}
+                  onChange={() => updateForm({ mode: 'description' })}
+                />
+                По описанию
+              </label>
+              <label className={form.mode === 'link' ? 'selected' : ''}>
+                <input type="radio" checked={form.mode === 'link'} onChange={() => updateForm({ mode: 'link' })} />
+                По ссылке
+              </label>
+            </fieldset>
+
+            {form.mode === 'link' ? (
+              <section className="form-section">
+                <p className="hint">
+                  Откройте{' '}
+                  <a href="https://pass.rw.by/ru/" target="_blank" rel="noreferrer">
+                    сайт БЖД <ExternalLink size={14} />
+                  </a>
+                  , выберите маршрут и дату, затем вставьте ссылку страницы с перечнем поездов. Обычно в ней уже есть
+                  маршрут и дата.
+                </p>
+
+                <label>
+                  Ссылка поиска
+                  <input
+                    value={form.searchUrl}
+                    onChange={(event) => updateForm({ searchUrl: event.target.value })}
+                    placeholder="https://pass.rw.by/ru/route/?from=..."
+                    required
+                  />
+                </label>
+
+                <div className="grid three">
+                  <label>
+                    Номер поезда
+                    <input
+                      value={form.trainNumber}
+                      onChange={(event) => updateForm({ trainNumber: event.target.value })}
+                      placeholder="Необязательно"
+                    />
+                  </label>
+                  <label>
+                    Время от
+                    <input
+                      type="time"
+                      value={form.timeFrom}
+                      onChange={(event) => updateForm({ timeFrom: event.target.value })}
+                    />
+                  </label>
+                  <label>
+                    Время до
+                    <input type="time" value={form.timeTo} onChange={(event) => updateForm({ timeTo: event.target.value })} />
+                  </label>
+                </div>
+
+                <label>
+                  Мониторить до
+                  <input
+                    type="datetime-local"
+                    value={form.monitorUntil}
+                    onChange={(event) => updateForm({ monitorUntil: event.target.value })}
+                    required
+                  />
+                </label>
+              </section>
+            ) : (
+              <section className="form-section">
+                <div className="route-grid">
+                  <label>
+                    Откуда
+                    <input value={form.from} onChange={(event) => updateForm({ from: event.target.value })} required />
+                    <span className="inline-links">
+                      {stationFavorites.map((station) => (
+                        <button key={`from-${station}`} type="button" onClick={() => setStation('from', station)}>
+                          {stationShortName(station)}
+                        </button>
+                      ))}
+                    </span>
+                  </label>
+                  <button className="swap-button" type="button" onClick={swapStations} aria-label="Поменять местами">
+                    <ArrowLeftRight size={18} />
+                  </button>
+                  <label>
+                    Куда
+                    <input value={form.to} onChange={(event) => updateForm({ to: event.target.value })} required />
+                    <span className="inline-links">
+                      {stationFavorites.map((station) => (
+                        <button key={`to-${station}`} type="button" onClick={() => setStation('to', station)}>
+                          {stationShortName(station)}
+                        </button>
+                      ))}
+                    </span>
+                  </label>
+                </div>
+
+                <label>
+                  Номер поезда
+                  <input
+                    value={form.trainNumber}
+                    onChange={(event) => updateForm({ trainNumber: event.target.value })}
+                    placeholder="Необязательно, например 701Б"
+                  />
+                </label>
+
+                <div className="grid three">
+                  <label>
+                    Дата
+                    <input type="date" value={form.date} onChange={(event) => updateForm({ date: event.target.value })} required />
+                    <span className="inline-links">
+                      <button type="button" onClick={() => setDate(0)}>
+                        сегодня
+                      </button>
+                      <button type="button" onClick={() => setDate(1)}>
+                        завтра
+                      </button>
+                      <button type="button" onClick={() => setDate(2)}>
+                        послезавтра
+                      </button>
+                    </span>
+                  </label>
+                  <label>
+                    Время от
+                    <input type="time" value={form.timeFrom} onChange={(event) => updateForm({ timeFrom: event.target.value })} />
+                  </label>
+                  <label>
+                    Время до
+                    <input type="time" value={form.timeTo} onChange={(event) => updateForm({ timeTo: event.target.value })} />
+                  </label>
+                </div>
+
+                <label>
+                  Мониторить до
+                  <input
+                    type="datetime-local"
+                    value={form.monitorUntil}
+                    onChange={(event) => updateForm({ monitorUntil: event.target.value })}
+                    required
+                  />
+                </label>
+              </section>
+            )}
+
+            <button className="primary" type="submit" disabled={busy}>
+              <Bell size={18} />
+              Запустить мониторинг
+            </button>
+          </form>
+        )}
       </section>
     </main>
   )
