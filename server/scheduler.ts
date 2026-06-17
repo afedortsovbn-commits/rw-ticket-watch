@@ -19,12 +19,10 @@ function canNotify(task: WatchTask) {
 }
 
 function describeTask(task: WatchTask) {
-  const route =
-    task.mode === 'train'
-      ? `поезд ${task.trainNumber}`
-      : `${task.from ?? 'станция отправления'} -> ${task.to ?? 'станция прибытия'}`
+  const route = `${task.from ?? 'станция отправления'} -> ${task.to ?? 'станция прибытия'}`
+  const train = task.trainNumber ? `, поезд ${task.trainNumber}` : ''
   const time = [task.timeFrom, task.timeTo].filter(Boolean).join('-')
-  return `${route}, ${task.date}${time ? `, ${time}` : ''}`
+  return `${route}${train}, ${task.date}${time ? `, ${time}` : ''}`
 }
 
 async function notify(task: WatchTask) {
@@ -90,11 +88,18 @@ export async function runTaskNow(id: string) {
   if (!task) {
     return undefined
   }
-  const result = await checkTickets(task)
-  return updateTask(id, {
-    status: result.hasTickets ? 'found' : 'active',
-    lastCheckedAt: result.checkedAt,
-    lastResult: result,
-    error: undefined,
-  })
+  try {
+    const result = await checkTickets(task)
+    return updateTask(id, {
+      status: result.hasTickets ? 'found' : 'active',
+      lastCheckedAt: result.checkedAt,
+      lastResult: result,
+      error: undefined,
+    })
+  } catch (error) {
+    return updateTask(id, {
+      status: 'active',
+      error: error instanceof Error ? error.message : 'Неизвестная ошибка проверки',
+    })
+  }
 }

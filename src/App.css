@@ -79,30 +79,6 @@
   gap: 16px;
 }
 
-.segmented {
-  background: #edf4f1;
-  border-radius: 8px;
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  padding: 4px;
-}
-
-.segmented button {
-  background: transparent;
-  border: 0;
-  border-radius: 6px;
-  color: #3d4d48;
-  cursor: pointer;
-  font-weight: 700;
-  padding: 10px;
-}
-
-.segmented button.active {
-  background: #ffffff;
-  color: #0f2c27;
-  box-shadow: 0 1px 4px rgba(18, 41, 36, 0.14);
-}
-
 .grid {
   display: grid;
   gap: 12px;

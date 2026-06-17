@@ -99,9 +99,10 @@ function App() {
     try {
       const payload = {
         ...form,
-        from: form.mode === 'route' ? form.from : undefined,
-        to: form.mode === 'route' ? form.to : undefined,
-        trainNumber: form.mode === 'train' ? form.trainNumber : form.trainNumber || undefined,
+        mode: 'route',
+        from: form.from,
+        to: form.to,
+        trainNumber: form.trainNumber || undefined,
       }
       await api<WatchTask>('/api/tasks', {
         method: 'POST',
@@ -165,53 +166,33 @@ function App() {
             <h2>Новая проверка</h2>
           </div>
 
-          <div className="segmented" role="tablist" aria-label="Тип проверки">
-            <button
-              type="button"
-              className={form.mode === 'route' ? 'active' : ''}
-              onClick={() => setForm({ ...form, mode: 'route' })}
-            >
-              Маршрут
-            </button>
-            <button
-              type="button"
-              className={form.mode === 'train' ? 'active' : ''}
-              onClick={() => setForm({ ...form, mode: 'train' })}
-            >
-              Номер поезда
-            </button>
-          </div>
-
-          {form.mode === 'route' ? (
-            <div className="grid two">
-              <label>
-                Откуда
-                <input
-                  value={form.from}
-                  onChange={(event) => setForm({ ...form, from: event.target.value })}
-                  required
-                />
-              </label>
-              <label>
-                Куда
-                <input
-                  value={form.to}
-                  onChange={(event) => setForm({ ...form, to: event.target.value })}
-                  required
-                />
-              </label>
-            </div>
-          ) : (
+          <div className="grid two">
             <label>
-              Номер поезда
+              Откуда
               <input
-                value={form.trainNumber}
-                onChange={(event) => setForm({ ...form, trainNumber: event.target.value })}
-                placeholder="Например, 027Б"
+                value={form.from}
+                onChange={(event) => setForm({ ...form, from: event.target.value })}
                 required
               />
             </label>
-          )}
+            <label>
+              Куда
+              <input
+                value={form.to}
+                onChange={(event) => setForm({ ...form, to: event.target.value })}
+                required
+              />
+            </label>
+          </div>
+
+          <label>
+            Номер поезда
+            <input
+              value={form.trainNumber}
+              onChange={(event) => setForm({ ...form, trainNumber: event.target.value })}
+              placeholder="Необязательно, например 701Б"
+            />
+          </label>
 
           <div className="grid three">
             <label>
@@ -305,9 +286,8 @@ function App() {
                   <div className="task-card__main">
                     <span className="badge">{statusText(task)}</span>
                     <h3>
-                      {task.mode === 'train'
-                        ? `Поезд ${task.trainNumber}`
-                        : `${task.from} -> ${task.to}`}
+                      {task.from} {'->'} {task.to}
+                      {task.trainNumber ? `, поезд ${task.trainNumber}` : ''}
                     </h3>
                     <p>
                       {task.date}

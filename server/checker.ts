@@ -1,22 +1,125 @@
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
 import type { CheckResult, WatchTask } from '../shared/types.js'
 
 const ticketSignals = ['Выбрать места', 'Свободные места', 'Свободно мест', 'Купить билет']
 const soldOutSignals = ['Мест нет', 'Нет мест', 'Продажа закрыта', 'свободных мест нет']
 
+type StationSuggestion = {
+  value: string
+  exp: string
+  ecp?: string
+}
+
+const requestHeaders = {
+  'User-Agent':
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124 Safari/537.36',
+  Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+}
+
+const execFileAsync = promisify(execFile)
+const knownStations: Record<string, StationSuggestion> = {
+  'минск-пассажирский': { value: 'Минск-Пассажирский', exp: '2100001', ecp: '140210' },
+  'брест-центральный': { value: 'Брест-Центральный', exp: '2100035', ecp: '130007' },
+}
+
 function normalize(value = '') {
   return value.trim().replace(/\s+/g, ' ')
 }
 
-function buildSearchUrl(task: WatchTask) {
+async function fetchViaPowerShell(url: string, accept: string) {
+  const psUrl = url.replace(/'/g, "''")
+  const psAccept = accept.replace(/'/g, "''")
+  const script = [
+    `$Url = '${psUrl}';`,
+    `$Accept = '${psAccept}';`,
+    '$ProgressPreference = "SilentlyContinue";',
+    '[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12;',
+    '$headers = @{ "User-Agent" = "Mozilla/5.0"; "Accept" = $Accept; "X-Requested-With" = "XMLHttpRequest" };',
+    '$response = Invoke-WebRequest -UseBasicParsing -Headers $headers -Uri $Url;',
+    'Write-Output $response.Content;',
+  ].join(' ')
+  const { stdout } = await execFileAsync('powershell.exe', ['-NoProfile', '-Command', script], {
+    maxBuffer: 15 * 1024 * 1024,
+    windowsHide: true,
+  })
+  return stdout
+}
+
+async function fetchWithRetry(url: string, init: RequestInit = {}, attempts = 3) {
+  let lastError: unknown
+
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return await fetch(url, init)
+    } catch (error) {
+      lastError = error
+      if (attempt < attempts) {
+        await new Promise((resolve) => setTimeout(resolve, 700 * attempt))
+      }
+    }
+  }
+
+  const message = lastError instanceof Error ? lastError.message : 'неизвестная сетевая ошибка'
+  if (process.platform === 'win32') {
+    const headers = init.headers as Record<string, string> | undefined
+    const accept = headers?.Accept ?? headers?.accept ?? '*/*'
+    const text = await fetchViaPowerShell(url, accept)
+    return new Response(text, { status: 200 })
+  }
+  throw new Error(`Не удалось подключиться к pass.rw.by после ${attempts} попыток: ${message}`)
+}
+
+async function lookupStation(query: string): Promise<StationSuggestion> {
+  const known = knownStations[query.trim().toLowerCase()]
+  if (known) {
+    return known
+  }
+
+  const response = await fetchWithRetry(
+    `https://pass.rw.by/ru/ajax/autocomplete/search/?term=${encodeURIComponent(query)}`,
+    {
+      headers: {
+        ...requestHeaders,
+        Accept: 'application/json,text/javascript,*/*;q=0.8',
+        'X-Requested-With': 'XMLHttpRequest',
+      },
+    },
+  )
+
+  if (!response.ok) {
+    throw new Error(`Не удалось найти станцию "${query}": pass.rw.by вернул HTTP ${response.status}`)
+  }
+
+  const suggestions = (await response.json()) as StationSuggestion[]
+  const exact = suggestions.find((station) => station.value.toLowerCase() === query.toLowerCase())
+  const station = exact ?? suggestions[0]
+
+  if (!station?.exp) {
+    throw new Error(`Станция "${query}" не найдена на pass.rw.by`)
+  }
+
+  return station
+}
+
+async function buildSearchUrl(task: WatchTask) {
   if (task.searchUrl?.trim()) {
     return task.searchUrl.trim()
   }
 
+  if (!task.from || !task.to) {
+    throw new Error('Для проверки мест нужен маршрут: станция отправления и станция прибытия.')
+  }
+
+  const [fromStation, toStation] = await Promise.all([lookupStation(task.from), lookupStation(task.to)])
   const params = new URLSearchParams()
-  if (task.from) params.set('from', task.from)
-  if (task.to) params.set('to', task.to)
-  if (task.date) params.set('date', task.date)
-  if (task.trainNumber) params.set('train', task.trainNumber)
+  params.set('from', fromStation.value)
+  params.set('from_exp', fromStation.exp)
+  if (fromStation.ecp) params.set('from_esr', fromStation.ecp)
+  params.set('to', toStation.value)
+  params.set('to_exp', toStation.exp)
+  if (toStation.ecp) params.set('to_esr', toStation.ecp)
+  params.set('date', task.date)
 
   return `https://pass.rw.by/ru/route/?${params.toString()}`
 }
@@ -47,13 +150,9 @@ function containsTimeWindow(text: string, task: WatchTask) {
 }
 
 export async function checkTickets(task: WatchTask): Promise<CheckResult> {
-  const sourceUrl = buildSearchUrl(task)
-  const response = await fetch(sourceUrl, {
-    headers: {
-      'User-Agent':
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124 Safari/537.36',
-      Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-    },
+  const sourceUrl = await buildSearchUrl(task)
+  const response = await fetchWithRetry(sourceUrl, {
+    headers: requestHeaders,
   })
 
   if (!response.ok) {
@@ -64,9 +163,9 @@ export async function checkTickets(task: WatchTask): Promise<CheckResult> {
   const text = normalize(stripTags(html))
   const matches = ticketSignals.filter((signal) => text.includes(signal))
   const soldOutMatches = soldOutSignals.filter((signal) => text.includes(signal))
-  const trainMatches =
-    task.trainNumber && !text.includes(task.trainNumber) ? [] : task.trainNumber ? [task.trainNumber] : []
-  const hasTickets = matches.length > 0 && containsTimeWindow(text, task)
+  const trainMatches = task.trainNumber && text.includes(task.trainNumber) ? [task.trainNumber] : []
+  const trainMatchesFilter = !task.trainNumber || trainMatches.length > 0
+  const hasTickets = matches.length > 0 && trainMatchesFilter && containsTimeWindow(text, task)
 
   return {
     hasTickets,
@@ -75,6 +174,8 @@ export async function checkTickets(task: WatchTask): Promise<CheckResult> {
     matches: [...matches, ...trainMatches],
     message: hasTickets
       ? 'Похоже, появились доступные места.'
+      : task.trainNumber && trainMatches.length === 0
+        ? `На странице маршрута не найден поезд ${task.trainNumber}. Проверьте номер поезда или направление.`
       : soldOutMatches.length > 0
         ? 'Мест пока нет.'
         : 'Я проверил страницу, но явного сигнала наличия мест не нашел.',
