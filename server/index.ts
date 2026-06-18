@@ -36,6 +36,7 @@ app.get('/api/health', (_request, response) => {
     ok: true,
     telegramConfigured: isTelegramConfigured(),
     checkIntervalMs: config.checkIntervalMs,
+    maxChecksPerTask: config.maxChecksPerTask,
     telegramMinIntervalMs: config.telegramMinIntervalMs,
   })
 })
@@ -93,6 +94,7 @@ app.post('/api/tasks', async (request, response, next) => {
       searchUrl: input.searchUrl || undefined,
       mode: input.mode === 'route' || input.mode === 'train' ? 'description' : input.mode,
       foundNotificationCount: 0,
+      checkCount: 0,
       status: 'active',
       createdAt: now,
       updatedAt: now,

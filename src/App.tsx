@@ -18,6 +18,7 @@ type Health = {
   ok: boolean
   telegramConfigured: boolean
   checkIntervalMs: number
+  maxChecksPerTask: number
   telegramMinIntervalMs: number
 }
 
@@ -278,7 +279,9 @@ function App() {
                   <Train size={20} />
                   <h2>Текущая задача</h2>
                 </div>
-                <p>Проверка идет автоматически раз в 3 секунды. Чтобы выбрать другой маршрут, остановите мониторинг.</p>
+                <p>
+                  Тестовый режим: две проверки с интервалом 20 секунд. После второй попытки задача завершится автоматически.
+                </p>
               </div>
             </div>
 
@@ -298,6 +301,9 @@ function App() {
                 <span>
                   <Clock3 size={16} />
                   {formatDateTime(runningTask.lastCheckedAt)}
+                </span>
+                <span>
+                  Попытка {runningTask.checkCount ?? 0} из {health?.maxChecksPerTask ?? 2}
                 </span>
                 <span>
                   <CalendarClock size={16} />

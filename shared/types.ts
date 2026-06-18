@@ -17,6 +17,7 @@ export interface WatchInput {
   lastHealthyAt?: string
   lastFailureNotifiedAt?: string
   completedAt?: string
+  checkCount?: number
 }
 
 export interface CheckResult {
@@ -43,4 +44,5 @@ export interface AppSettings {
   telegramChatId: string
   checkIntervalMs: number
   telegramMinIntervalMs: number
+  maxChecksPerTask: number
 }

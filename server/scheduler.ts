@@ -15,6 +15,14 @@ function isRunnableStatus(task?: WatchTask) {
   return task?.status === 'active' || task?.status === 'found'
 }
 
+function nextCheckCount(task: WatchTask) {
+  return (task.checkCount ?? 0) + 1
+}
+
+function reachedCheckLimit(checkCount: number) {
+  return checkCount >= config.maxChecksPerTask
+}
+
 async function readCurrentTask(id: string) {
   return (await readTasks()).find((item) => item.id === id)
 }
@@ -101,15 +109,23 @@ async function tick() {
         continue
       }
 
+      if ((task.checkCount ?? 0) >= config.maxChecksPerTask) {
+        await updateTask(task.id, { status: 'completed', completedAt: new Date().toISOString() })
+        continue
+      }
+
       try {
+        const checkCount = nextCheckCount(task)
         const result = await checkTickets(task)
         const currentTask = await readCurrentTask(task.id)
         if (!isRunnableStatus(currentTask)) {
           continue
         }
-        const status = result.hasTickets ? 'found' : 'active'
+        const status = result.hasTickets ? 'found' : reachedCheckLimit(checkCount) ? 'completed' : 'active'
         const updated = await updateTask(task.id, {
           status,
+          checkCount,
+          completedAt: status === 'completed' ? result.checkedAt : undefined,
           lastCheckedAt: result.checkedAt,
           lastResult: result,
           lastHealthyAt: result.checkedAt,
@@ -124,9 +140,12 @@ async function tick() {
         if (!isRunnableStatus(currentTask)) {
           continue
         }
+        const checkCount = nextCheckCount(task)
         await notifyFailureAfterSuccess(task, error)
         await updateTask(task.id, {
-          status: 'active',
+          status: reachedCheckLimit(checkCount) ? 'completed' : 'active',
+          checkCount,
+          completedAt: reachedCheckLimit(checkCount) ? new Date().toISOString() : undefined,
           error: error instanceof Error ? error.message : 'Неизвестная ошибка проверки',
         })
       }
@@ -150,14 +169,20 @@ export async function runTaskNow(id: string) {
   if (!isRunnableStatus(task)) {
     return task
   }
+  if ((task.checkCount ?? 0) >= config.maxChecksPerTask) {
+    return updateTask(id, { status: 'completed', completedAt: new Date().toISOString() })
+  }
   try {
+    const checkCount = nextCheckCount(task)
     const result = await checkTickets(task)
     const currentTask = await readCurrentTask(id)
     if (!isRunnableStatus(currentTask)) {
       return currentTask
     }
     const updated = await updateTask(id, {
-      status: result.hasTickets ? 'found' : 'active',
+      status: result.hasTickets ? 'found' : reachedCheckLimit(checkCount) ? 'completed' : 'active',
+      checkCount,
+      completedAt: !result.hasTickets && reachedCheckLimit(checkCount) ? result.checkedAt : undefined,
       lastCheckedAt: result.checkedAt,
       lastResult: result,
       lastHealthyAt: result.checkedAt,
@@ -175,9 +200,12 @@ export async function runTaskNow(id: string) {
     if (!isRunnableStatus(currentTask)) {
       return currentTask
     }
+    const checkCount = nextCheckCount(task)
     await notifyFailureAfterSuccess(task, error)
     return updateTask(id, {
-      status: 'active',
+      status: reachedCheckLimit(checkCount) ? 'completed' : 'active',
+      checkCount,
+      completedAt: reachedCheckLimit(checkCount) ? new Date().toISOString() : undefined,
       error: error instanceof Error ? error.message : 'Неизвестная ошибка проверки',
     })
   }
