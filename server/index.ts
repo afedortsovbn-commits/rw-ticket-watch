@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { z } from 'zod'
 import type { WatchTask } from '../shared/types.js'
 import { config } from './config.js'
+import { previewTrains, searchStations } from './checker.js'
 import { runTaskNow, startScheduler } from './scheduler.js'
 import { readTasks, updateTask, writeTasks } from './store.js'
 import { isTelegramConfigured, sendTelegramMessage } from './telegram.js'
@@ -18,7 +19,12 @@ const watchSchema = z.object({
   mode: z.enum(['description', 'link', 'route', 'train']),
   from: z.string().trim().optional(),
   to: z.string().trim().optional(),
+  fromExp: z.string().trim().optional(),
+  fromEsr: z.string().trim().optional(),
+  toExp: z.string().trim().optional(),
+  toEsr: z.string().trim().optional(),
   trainNumber: z.string().trim().optional(),
+  trainNumbers: z.array(z.string().trim()).optional(),
   date: z.string().trim().min(1),
   timeFrom: z.string().trim().optional(),
   timeTo: z.string().trim().optional(),
@@ -30,6 +36,37 @@ const watchSchema = z.object({
 const runningStatuses = new Set(['active', 'paused', 'found'])
 let isCreatingTask = false
 const createTokens = new Set<string>()
+
+app.post('/api/login', (request, response) => {
+  const { login, password } = (request.body ?? {}) as { login?: string; password?: string }
+  if (!config.authPassword) {
+    response.status(503).json({ message: 'Вход не настроен на сервере (не задан AUTH_PASSWORD).' })
+    return
+  }
+  if (login === config.authLogin && password === config.authPassword) {
+    response.json({ token: config.authToken })
+    return
+  }
+  response.status(401).json({ message: 'Неверный логин или пароль' })
+})
+
+// Простая защита API: все запросы к /api (кроме входа и проверки доступности)
+// требуют токен, полученный после входа.
+app.use((request, response, next) => {
+  if (!request.path.startsWith('/api/')) {
+    next()
+    return
+  }
+  if (request.path === '/api/login' || request.path === '/api/health') {
+    next()
+    return
+  }
+  if (request.header('x-auth-token') !== config.authToken) {
+    response.status(401).json({ message: 'Требуется вход' })
+    return
+  }
+  next()
+})
 
 app.get('/api/health', (_request, response) => {
   response.json({
@@ -45,6 +82,41 @@ app.get('/api/session', (_request, response) => {
   const createToken = crypto.randomUUID()
   createTokens.add(createToken)
   response.json({ createToken })
+})
+
+app.get('/api/stations', async (request, response, next) => {
+  try {
+    const term = z.string().trim().min(2).parse(request.query.term)
+    response.json(await searchStations(term))
+  } catch (error) {
+    next(error)
+  }
+})
+
+const previewSchema = z.object({
+  from: z.string().trim().optional(),
+  to: z.string().trim().optional(),
+  fromExp: z.string().trim().optional(),
+  fromEsr: z.string().trim().optional(),
+  toExp: z.string().trim().optional(),
+  toEsr: z.string().trim().optional(),
+  date: z.string().trim().min(1),
+  timeFrom: z.string().trim().optional(),
+  timeTo: z.string().trim().optional(),
+  searchUrl: z.string().trim().url().optional().or(z.literal('')),
+})
+
+app.post('/api/trains/preview', async (request, response, next) => {
+  try {
+    const input = previewSchema.parse(request.body)
+    if (!input.searchUrl && (!input.from || !input.to)) {
+      response.status(400).json({ message: 'Укажите станцию отправления и прибытия или ссылку поиска.' })
+      return
+    }
+    response.json(await previewTrains({ ...input, searchUrl: input.searchUrl || undefined }))
+  } catch (error) {
+    next(error)
+  }
 })
 
 app.get('/api/tasks', async (_request, response, next) => {

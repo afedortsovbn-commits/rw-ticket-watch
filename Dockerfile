@@ -1,4 +1,6 @@
-FROM node:24-alpine
+# Образ Playwright уже содержит Chromium и системные библиотеки для него.
+# Версия тега должна совпадать с playwright в package.json.
+FROM mcr.microsoft.com/playwright:v1.61.0-jammy
 
 WORKDIR /app
 

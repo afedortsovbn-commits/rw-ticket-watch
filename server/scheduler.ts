@@ -20,7 +20,7 @@ function nextCheckCount(task: WatchTask) {
 }
 
 function reachedCheckLimit(checkCount: number) {
-  return checkCount >= config.maxChecksPerTask
+  return config.maxChecksPerTask > 0 && checkCount >= config.maxChecksPerTask
 }
 
 async function readCurrentTask(id: string) {
@@ -58,24 +58,17 @@ async function notifyFound(task: WatchTask) {
 }
 
 async function notifyFoundAndComplete(task: WatchTask) {
-  const sentCount = task.foundNotificationCount ?? 0
-  if (sentCount >= 3) {
+  if ((task.foundNotificationCount ?? 0) >= 1) {
     return
   }
 
-  for (let index = sentCount + 1; index <= 3; index += 1) {
-    const now = new Date().toISOString()
-    await notifyFound(task)
-    await updateTask(task.id, { foundNotificationCount: index, lastNotificationAt: now })
-    if (index < 3) {
-      await new Promise((resolve) => setTimeout(resolve, 1200))
-    }
-  }
-
+  const now = new Date().toISOString()
+  await notifyFound(task)
   await updateTask(task.id, {
     status: 'completed',
-    completedAt: new Date().toISOString(),
-    foundNotificationCount: 3,
+    completedAt: now,
+    foundNotificationCount: 1,
+    lastNotificationAt: now,
   })
 }
 
@@ -109,7 +102,7 @@ async function tick() {
         continue
       }
 
-      if ((task.checkCount ?? 0) >= config.maxChecksPerTask) {
+      if (reachedCheckLimit(task.checkCount ?? 0)) {
         await updateTask(task.id, { status: 'completed', completedAt: new Date().toISOString() })
         continue
       }
@@ -155,9 +148,17 @@ async function tick() {
   }
 }
 
+function scheduleNext() {
+  const jitter = Math.floor(Math.random() * Math.max(0, config.checkJitterMs))
+  timer = setTimeout(async () => {
+    await tick()
+    scheduleNext()
+  }, config.checkIntervalMs + jitter)
+}
+
 export function startScheduler() {
   if (timer) return
-  timer = setInterval(tick, config.checkIntervalMs)
+  scheduleNext()
   void tick()
 }
 
@@ -169,7 +170,7 @@ export async function runTaskNow(id: string) {
   if (!isRunnableStatus(task)) {
     return task
   }
-  if ((task.checkCount ?? 0) >= config.maxChecksPerTask) {
+  if (reachedCheckLimit(task.checkCount ?? 0)) {
     return updateTask(id, { status: 'completed', completedAt: new Date().toISOString() })
   }
   try {

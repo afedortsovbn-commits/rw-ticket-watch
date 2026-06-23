@@ -2,11 +2,23 @@ export type WatchStatus = 'active' | 'paused' | 'found' | 'completed' | 'expired
 
 export type WatchMode = 'description' | 'link' | 'route' | 'train'
 
+export interface StationOption {
+  value: string
+  exp: string
+  ecp?: string
+  label?: string
+}
+
 export interface WatchInput {
   mode: WatchMode
   from?: string
   to?: string
+  fromExp?: string
+  fromEsr?: string
+  toExp?: string
+  toEsr?: string
   trainNumber?: string
+  trainNumbers?: string[]
   date: string
   timeFrom?: string
   timeTo?: string
@@ -20,12 +32,22 @@ export interface WatchInput {
   checkCount?: number
 }
 
+export interface TrainInfo {
+  number: string
+  departure: string
+  arrival: string
+  hasPlaces: boolean
+  freeSeats: number
+  places: string
+}
+
 export interface CheckResult {
   hasTickets: boolean
   message: string
   sourceUrl: string
   checkedAt: string
   matches: string[]
+  trains?: TrainInfo[]
 }
 
 export interface WatchTask extends WatchInput {

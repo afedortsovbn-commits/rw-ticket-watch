@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import {
   ArrowLeftRight,
   Bell,
@@ -11,7 +11,7 @@ import {
   Square,
   Train,
 } from 'lucide-react'
-import type { WatchMode, WatchTask } from '../shared/types'
+import type { StationOption, TrainInfo, WatchMode, WatchTask } from '../shared/types'
 import './App.css'
 
 type Health = {
@@ -30,6 +30,10 @@ type FormState = {
   mode: Extract<WatchMode, 'description' | 'link'>
   from: string
   to: string
+  fromExp: string
+  fromEsr: string
+  toExp: string
+  toEsr: string
   trainNumber: string
   date: string
   timeFrom: string
@@ -38,7 +42,9 @@ type FormState = {
   searchUrl: string
 }
 
-const stationFavorites = ['Минск-Пассажирский', 'Брест-Центральный', 'Гомель']
+type StationField = 'from' | 'to'
+
+const stationFavorites = ['Гомель', 'Минск-Пассажирский']
 
 function localDate(offsetDays = 0) {
   const date = new Date()
@@ -54,8 +60,12 @@ function defaultForm(): FormState {
   const date = localDate()
   return {
     mode: 'description',
-    from: 'Минск-Пассажирский',
-    to: 'Брест-Центральный',
+    from: 'Гомель',
+    to: 'Минск-Пассажирский',
+    fromExp: '2100100',
+    fromEsr: '150000',
+    toExp: '2100001',
+    toEsr: '140210',
     trainNumber: '',
     date,
     timeFrom: '00:00',
@@ -109,11 +119,23 @@ function withMonitorDefault(form: FormState) {
   return form
 }
 
-async function api<T>(url: string, options?: RequestInit): Promise<T> {
+const TOKEN_KEY = 'rw-auth-token'
+
+async function api<T>(url: string, options: RequestInit = {}): Promise<T> {
+  const token = localStorage.getItem(TOKEN_KEY) ?? ''
   const response = await fetch(url, {
-    headers: { 'Content-Type': 'application/json' },
     ...options,
+    headers: {
+      'Content-Type': 'application/json',
+      'x-auth-token': token,
+      ...(options.headers as Record<string, string> | undefined),
+    },
   })
+  if (response.status === 401) {
+    localStorage.removeItem(TOKEN_KEY)
+    window.location.reload()
+    throw new Error('Требуется вход')
+  }
   if (!response.ok) {
     const payload = (await response.json().catch(() => null)) as { message?: string } | null
     throw new Error(payload?.message ?? 'Запрос не выполнен')
@@ -121,13 +143,92 @@ async function api<T>(url: string, options?: RequestInit): Promise<T> {
   return response.json() as Promise<T>
 }
 
+function Login({ onSuccess }: { onSuccess: (token: string) => void }) {
+  const [login, setLogin] = useState('')
+  const [password, setPassword] = useState('')
+  const [error, setError] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  async function submit(event: FormEvent) {
+    event.preventDefault()
+    setBusy(true)
+    setError('')
+    try {
+      const response = await fetch('/api/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ login, password }),
+      })
+      if (!response.ok) {
+        const payload = (await response.json().catch(() => null)) as { message?: string } | null
+        throw new Error(payload?.message ?? 'Не удалось войти')
+      }
+      const { token } = (await response.json()) as { token: string }
+      onSuccess(token)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Ошибка входа')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <main className="app-shell login-shell">
+      <section className="panel login-panel">
+        <h1 className="login-title">Мониторинг свободных мест БЖД</h1>
+        <form className="login-form" onSubmit={submit}>
+          <h2>Вход</h2>
+          <label>
+            Логин
+            <input value={login} onChange={(event) => setLogin(event.target.value)} autoComplete="username" required />
+          </label>
+          <label>
+            Пароль
+            <input
+              type="password"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              autoComplete="current-password"
+              required
+            />
+          </label>
+          {error && <div className="notice">{error}</div>}
+          <button className="primary" type="submit" disabled={busy}>
+            {busy ? 'Вхожу…' : 'Войти'}
+          </button>
+        </form>
+      </section>
+    </main>
+  )
+}
+
 function App() {
+  const [token, setToken] = useState(() => localStorage.getItem(TOKEN_KEY) ?? '')
+  if (!token) {
+    return (
+      <Login
+        onSuccess={(value) => {
+          localStorage.setItem(TOKEN_KEY, value)
+          setToken(value)
+        }}
+      />
+    )
+  }
+  return <Dashboard />
+}
+
+function Dashboard() {
   const [tasks, setTasks] = useState<WatchTask[]>([])
   const [health, setHealth] = useState<Health | null>(null)
   const [form, setForm] = useState<FormState>(() => defaultForm())
   const [message, setMessage] = useState('')
   const [busy, setBusy] = useState(false)
   const [createToken, setCreateToken] = useState('')
+  const [stationOptions, setStationOptions] = useState<Record<StationField, StationOption[]>>({ from: [], to: [] })
+  const [stationBusy, setStationBusy] = useState<StationField | null>(null)
+  const [previewTrains, setPreviewTrains] = useState<TrainInfo[]>([])
+  const [selectedTrains, setSelectedTrains] = useState<string[]>([])
+  const [previewBusy, setPreviewBusy] = useState(false)
 
   const runningTasks = useMemo(
     () => tasks.filter((task) => task.status === 'active' || task.status === 'paused' || task.status === 'found'),
@@ -159,7 +260,14 @@ function App() {
     }
   }, [])
 
+  // При изменении маршрута/даты/времени ранее показанный список поездов устаревает.
+  const routeKeys: (keyof FormState)[] = ['from', 'to', 'fromExp', 'toExp', 'date', 'timeFrom', 'timeTo']
+
   function updateForm(patch: Partial<FormState>) {
+    if (routeKeys.some((key) => key in patch)) {
+      setPreviewTrains([])
+      setSelectedTrains([])
+    }
     setForm((current) => {
       const next = { ...current, ...patch }
       const wasAutoMonitor = current.monitorUntil === monitorUntil(current.date, current.timeTo)
@@ -180,18 +288,164 @@ function App() {
     updateForm({ date: localDate(offsetDays) })
   }
 
-  function setStation(field: 'from' | 'to', station: string) {
-    updateForm({ [field]: station })
+  // Меняя название станции вручную или через избранное, сбрасываем выбранный
+  // ранее код — иначе проверка пойдёт по старой станции.
+  function changeStation(field: StationField, value: string) {
+    updateForm(field === 'from' ? { from: value, fromExp: '', fromEsr: '' } : { to: value, toExp: '', toEsr: '' })
+    setStationOptions((current) => ({ ...current, [field]: [] }))
+  }
+
+  function setStation(field: StationField, station: string) {
+    changeStation(field, station)
   }
 
   function swapStations() {
-    updateForm({ from: form.to, to: form.from })
+    updateForm({
+      from: form.to,
+      to: form.from,
+      fromExp: form.toExp,
+      fromEsr: form.toEsr,
+      toExp: form.fromExp,
+      toEsr: form.fromEsr,
+    })
+  }
+
+  async function searchStation(field: StationField) {
+    const term = (field === 'from' ? form.from : form.to).trim()
+    if (term.length < 2) {
+      setMessage('Введите хотя бы 2 символа названия станции.')
+      return
+    }
+    setMessage('')
+    setStationBusy(field)
+    try {
+      const options = await api<StationOption[]>(`/api/stations?term=${encodeURIComponent(term)}`)
+      setStationOptions((current) => ({ ...current, [field]: options }))
+      if (options.length === 0) {
+        setMessage(`По запросу «${term}» БЖД не вернул станций. Уточните название.`)
+      }
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Не удалось получить список станций')
+    } finally {
+      setStationBusy(null)
+    }
+  }
+
+  function pickStation(field: StationField, option: StationOption) {
+    updateForm(
+      field === 'from'
+        ? { from: option.value, fromExp: option.exp, fromEsr: option.ecp ?? '' }
+        : { to: option.value, toExp: option.exp, toEsr: option.ecp ?? '' },
+    )
+    setStationOptions((current) => ({ ...current, [field]: [] }))
+  }
+
+  async function showTrains() {
+    if (!form.from.trim() || !form.to.trim()) {
+      setMessage('Укажите станцию отправления и прибытия.')
+      return
+    }
+    setMessage('')
+    setPreviewBusy(true)
+    try {
+      const trains = await api<TrainInfo[]>('/api/trains/preview', {
+        method: 'POST',
+        body: JSON.stringify({
+          from: form.from,
+          to: form.to,
+          fromExp: form.fromExp || undefined,
+          fromEsr: form.fromEsr || undefined,
+          toExp: form.toExp || undefined,
+          toEsr: form.toEsr || undefined,
+          date: form.date,
+          timeFrom: form.timeFrom || undefined,
+          timeTo: form.timeTo || undefined,
+        }),
+      })
+      setPreviewTrains(trains)
+      setSelectedTrains([])
+      if (trains.length === 0) {
+        setMessage('На выбранную дату и время поездов не нашлось.')
+      }
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Не удалось загрузить список поездов')
+    } finally {
+      setPreviewBusy(false)
+    }
+  }
+
+  function toggleTrain(number: string) {
+    // Поезда с местами выбирать незачем — мониторить нечего.
+    const train = previewTrains.find((item) => item.number === number)
+    if (train && train.freeSeats > 0) return
+
+    const next = selectedTrains.includes(number)
+      ? selectedTrains.filter((item) => item !== number)
+      : [...selectedTrains, number]
+    setSelectedTrains(next)
+
+    // «Мониторить до» по умолчанию — до отправления последнего выбранного поезда.
+    const departures = previewTrains
+      .filter((train) => next.includes(train.number))
+      .map((train) => train.departure)
+      .filter((time) => /^\d{1,2}:\d{2}$/.test(time))
+      .sort()
+    if (departures.length > 0) {
+      setForm((current) => ({ ...current, monitorUntil: `${current.date}T${departures[departures.length - 1]}` }))
+    }
+  }
+
+  function renderStationField(field: StationField, labelText: string) {
+    const value = field === 'from' ? form.from : form.to
+    const options = stationOptions[field]
+    const loading = stationBusy === field
+    return (
+      <>
+        <label className={`route__field route__field--${field}`}>
+          <div className="station-input">
+            <span className="cap">{labelText}</span>
+            <input value={value} onChange={(event) => changeStation(field, event.target.value)} required />
+          </div>
+          {options.length > 0 && (
+            <ul className="station-options">
+              {options.map((option) => (
+                <li key={`${field}-${option.exp}`}>
+                  <button type="button" onClick={() => pickStation(field, option)}>
+                    {option.label ?? option.value}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </label>
+        <button
+          type="button"
+          className={`secondary compact find-btn find-btn--${field}`}
+          onClick={() => void searchStation(field)}
+          disabled={loading || value.trim().length < 2}
+        >
+          <Search size={16} />
+          <span className="btn-text">{loading ? 'Ищу…' : 'Найти'}</span>
+        </button>
+        <span className={`inline-links route__fav route__fav--${field}`}>
+          {stationFavorites.map((station) => (
+            <button key={`${field}-${station}`} type="button" onClick={() => setStation(field, station)}>
+              {stationShortName(station)}
+            </button>
+          ))}
+        </span>
+      </>
+    )
   }
 
   async function createTask() {
     if (busy || runningTask) return
     if (!createToken) {
       setMessage('Форма еще загружается. Подождите пару секунд.')
+      return
+    }
+    if (form.mode === 'description' && selectedTrains.length === 0) {
+      setMessage('Нажмите «Показать поезда» и отметьте хотя бы один поезд.')
       return
     }
     setBusy(true)
@@ -214,7 +468,11 @@ function App() {
               mode: 'description',
               from: prepared.from,
               to: prepared.to,
-              trainNumber: prepared.trainNumber || undefined,
+              fromExp: prepared.fromExp || undefined,
+              fromEsr: prepared.fromEsr || undefined,
+              toExp: prepared.toExp || undefined,
+              toEsr: prepared.toEsr || undefined,
+              trainNumbers: selectedTrains,
               date: prepared.date,
               timeFrom: prepared.timeFrom || undefined,
               timeTo: prepared.timeTo || undefined,
@@ -227,6 +485,8 @@ function App() {
         body: JSON.stringify(payload),
       })
       setForm((current) => ({ ...defaultForm(), date: current.date }))
+      setPreviewTrains([])
+      setSelectedTrains([])
       await loadData()
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'Не удалось добавить задачу')
@@ -258,17 +518,28 @@ function App() {
   return (
     <main className="app-shell">
       <section className="topbar">
-        <div>
-          <p className="eyebrow">Монитор билетов БЖД</p>
-          <h1>Проверка свободных мест</h1>
-        </div>
+        <h1>Мониторинг свободных мест БЖД</h1>
         <div className="topbar__status">
-          <span>{runningTasks.length ? `${runningTasks.length} активн.` : 'нет активных задач'}</span>
           <span>{health?.telegramConfigured ? 'Telegram подключен' : 'Telegram не настроен'}</span>
+          <button
+            className="secondary compact"
+            type="button"
+            onClick={() => void testTelegram()}
+            title="Отправить тестовое сообщение в Telegram"
+          >
+            <Send size={16} />
+            Тест Telegram
+          </button>
         </div>
       </section>
 
       <section className="panel main-panel">
+        {(previewBusy || stationBusy) && (
+          <div className="notice loading">
+            <span className="spinner" aria-hidden="true" />
+            Запрашиваю данные у pass.rw.by — это занимает несколько секунд…
+          </div>
+        )}
         {message && <div className="notice">{message}</div>}
 
         {runningTask ? (
@@ -280,7 +551,8 @@ function App() {
                   <h2>Текущая задача</h2>
                 </div>
                 <p>
-                  Тестовый режим: две проверки с интервалом 20 секунд. После второй попытки задача завершится автоматически.
+                  Проверяю наличие мест автоматически каждые несколько минут. Как только места появятся, пришлю
+                  сообщение в Telegram и остановлю задачу.
                 </p>
               </div>
             </div>
@@ -303,7 +575,8 @@ function App() {
                   {formatDateTime(runningTask.lastCheckedAt)}
                 </span>
                 <span>
-                  Попытка {runningTask.checkCount ?? 0} из {health?.maxChecksPerTask ?? 2}
+                  Проверок: {runningTask.checkCount ?? 0}
+                  {health?.maxChecksPerTask ? ` из ${health.maxChecksPerTask}` : ''}
                 </span>
                 <span>
                   <CalendarClock size={16} />
@@ -331,33 +604,8 @@ function App() {
           </section>
         ) : (
           <section className="form-panel">
-            <div className="panel__title split">
-              <div className="title-row">
-                <Search size={20} />
-                <h2>Новая проверка</h2>
-              </div>
-              <button className="secondary compact" type="button" onClick={() => void testTelegram()}>
-                <Send size={16} />
-                Проверить Telegram
-              </button>
-            </div>
-
-            <fieldset className="mode-choice">
-              <legend>Как задать поиск</legend>
-              <label className={form.mode === 'description' ? 'selected' : ''}>
-                <input
-                  type="radio"
-                  checked={form.mode === 'description'}
-                  onChange={() => updateForm({ mode: 'description' })}
-                />
-                По описанию
-              </label>
-              <label className={form.mode === 'link' ? 'selected' : ''}>
-                <input type="radio" checked={form.mode === 'link'} onChange={() => updateForm({ mode: 'link' })} />
-                По ссылке
-              </label>
-            </fieldset>
-
+            {/* Переключатель «Тип поиска» временно скрыт — используется режим «по описанию».
+                Режим «по ссылке» остаётся в коде, при необходимости вернём селектор. */}
             {form.mode === 'link' ? (
               <section className="form-section">
                 <p className="hint">
@@ -414,84 +662,99 @@ function App() {
               </section>
             ) : (
               <section className="form-section">
-                <div className="route-grid">
-                  <label>
-                    Откуда
-                    <input value={form.from} onChange={(event) => updateForm({ from: event.target.value })} required />
-                    <span className="inline-links">
-                      {stationFavorites.map((station) => (
-                        <button key={`from-${station}`} type="button" onClick={() => setStation('from', station)}>
-                          {stationShortName(station)}
-                        </button>
-                      ))}
-                    </span>
-                  </label>
+                <div className="route">
+                  {renderStationField('from', 'Откуда')}
                   <button className="swap-button" type="button" onClick={swapStations} aria-label="Поменять местами">
-                    <ArrowLeftRight size={18} />
+                    <ArrowLeftRight size={16} />
                   </button>
-                  <label>
-                    Куда
-                    <input value={form.to} onChange={(event) => updateForm({ to: event.target.value })} required />
-                    <span className="inline-links">
-                      {stationFavorites.map((station) => (
-                        <button key={`to-${station}`} type="button" onClick={() => setStation('to', station)}>
-                          {stationShortName(station)}
-                        </button>
-                      ))}
-                    </span>
-                  </label>
+                  {renderStationField('to', 'Куда')}
                 </div>
 
-                <label>
-                  Номер поезда
-                  <input
-                    value={form.trainNumber}
-                    onChange={(event) => updateForm({ trainNumber: event.target.value })}
-                    placeholder="Необязательно, например 701Б"
-                  />
-                </label>
-
-                <div className="grid schedule">
-                  <label>
-                    Дата
+                <div className="schedule">
+                  <label className="field-inline">
+                    <span className="cap">Дата</span>
                     <input type="date" value={form.date} onChange={(event) => updateForm({ date: event.target.value })} required />
-                    <span className="inline-links">
-                      <button type="button" onClick={() => setDate(0)}>
-                        сегодня
-                      </button>
-                      <button type="button" onClick={() => setDate(1)}>
-                        завтра
-                      </button>
-                      <button type="button" onClick={() => setDate(2)}>
-                        послезавтра
-                      </button>
-                    </span>
                   </label>
-                  <label>
-                    Время от
-                    <input type="time" value={form.timeFrom} onChange={(event) => updateForm({ timeFrom: event.target.value })} />
+                  <label className="field-inline">
+                    <span className="cap">с</span>
+                    <input className="time-input" type="time" value={form.timeFrom} onChange={(event) => updateForm({ timeFrom: event.target.value })} />
                   </label>
-                  <label>
-                    Время до
-                    <input type="time" value={form.timeTo} onChange={(event) => updateForm({ timeTo: event.target.value })} />
+                  <label className="field-inline">
+                    <span className="cap">по</span>
+                    <input className="time-input" type="time" value={form.timeTo} onChange={(event) => updateForm({ timeTo: event.target.value })} />
                   </label>
+                  <span className="inline-links date-links">
+                    <button type="button" onClick={() => setDate(0)}>
+                      сегодня
+                    </button>
+                    <button type="button" onClick={() => setDate(1)}>
+                      завтра
+                    </button>
+                    <button type="button" onClick={() => setDate(2)}>
+                      послезавтра
+                    </button>
+                  </span>
                 </div>
 
-                <label>
-                  Мониторить до
-                  <input
-                    type="datetime-local"
-                    value={form.monitorUntil}
-                    onChange={(event) => updateForm({ monitorUntil: event.target.value })}
-                    required
-                  />
-                </label>
+                <button className="secondary" type="button" onClick={() => void showTrains()} disabled={previewBusy}>
+                  <Search size={16} />
+                  {previewBusy ? 'Загружаю поезда…' : 'Показать поезда'}
+                </button>
+
+                {previewTrains.length > 0 && (
+                  <div className="train-list">
+                    {previewTrains.map((train) => {
+                      const available = train.freeSeats > 0
+                      const checked = selectedTrains.includes(train.number)
+                      return (
+                        <label
+                          key={`${train.number}-${train.departure}`}
+                          className={`train-row ${available ? 'available' : 'soldout'} ${checked ? 'checked' : ''}`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            disabled={available}
+                            onChange={() => toggleTrain(train.number)}
+                          />
+                          <span className="train-row__num">{train.number}</span>
+                          <span className="train-row__time">
+                            {train.departure} → {train.arrival}
+                          </span>
+                          <span className="train-row__seats">
+                            {available ? `${train.freeSeats} мест` : 'нет мест'}
+                          </span>
+                          {train.places && <span className="train-row__detail">{train.places}</span>}
+                        </label>
+                      )
+                    })}
+                  </div>
+                )}
+
+                {selectedTrains.length > 0 && (
+                  <label>
+                    Мониторить до
+                    <input
+                      type="datetime-local"
+                      value={form.monitorUntil}
+                      onChange={(event) => updateForm({ monitorUntil: event.target.value })}
+                      required
+                    />
+                  </label>
+                )}
               </section>
             )}
 
-            <button className="primary" type="button" disabled={busy} onClick={() => void createTask()}>
+            <button
+              className="primary"
+              type="button"
+              disabled={busy || (form.mode === 'description' && selectedTrains.length === 0)}
+              onClick={() => void createTask()}
+            >
               <Bell size={18} />
-              Запустить мониторинг
+              {form.mode === 'description'
+                ? `Мониторить${selectedTrains.length ? ` (${selectedTrains.length})` : ''}`
+                : 'Запустить мониторинг'}
             </button>
           </section>
         )}

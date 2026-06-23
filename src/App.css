@@ -11,23 +11,21 @@
   margin-bottom: 24px;
 }
 
-.eyebrow {
-  color: #006b5f;
-  font-size: 14px;
-  font-weight: 700;
-  margin-bottom: 8px;
-  text-transform: uppercase;
-}
-
 .topbar h1 {
   max-width: 760px;
 }
 
 .topbar__status {
+  align-items: center;
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
   justify-content: flex-end;
+}
+
+.topbar__status .icon-button {
+  height: 34px;
+  width: 34px;
 }
 
 .topbar__status span,
@@ -53,6 +51,60 @@
   display: grid;
   gap: 16px;
   width: 100%;
+}
+
+.login-shell {
+  align-items: center;
+  display: flex;
+  justify-content: center;
+  min-height: 100vh;
+}
+
+.login-panel {
+  max-width: 400px;
+  width: 100%;
+}
+
+.login-title {
+  font-size: 23px;
+  line-height: 1.2;
+  margin-bottom: 18px;
+  text-align: center;
+}
+
+.login-form {
+  display: grid;
+  gap: 14px;
+}
+
+.login-form h2 {
+  margin-bottom: 2px;
+  text-align: center;
+}
+
+.notice.loading {
+  align-items: center;
+  background: #eaf4f0;
+  border-color: #bcdcd0;
+  color: #0f463d;
+  display: flex;
+  gap: 10px;
+}
+
+.spinner {
+  animation: spin 0.8s linear infinite;
+  border: 2px solid #b6d4ca;
+  border-radius: 50%;
+  border-top-color: #006b5f;
+  flex: none;
+  height: 16px;
+  width: 16px;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .panel__title,
@@ -89,47 +141,6 @@
   gap: 16px;
 }
 
-.mode-choice {
-  background: #edf5f2;
-  border: 1px solid #d8e0dd;
-  border-radius: 8px;
-  display: grid;
-  gap: 8px;
-  grid-template-columns: 1fr 1fr;
-  margin: 0;
-  padding: 10px;
-}
-
-.mode-choice legend {
-  color: #41514d;
-  font-size: 14px;
-  font-weight: 700;
-  padding: 0 4px;
-}
-
-.mode-choice label {
-  align-items: center;
-  background: transparent;
-  border-radius: 7px;
-  color: #173d35;
-  cursor: pointer;
-  display: flex;
-  justify-content: center;
-  padding: 10px;
-}
-
-.mode-choice label.selected {
-  background: #ffffff;
-  box-shadow: 0 8px 18px rgba(18, 41, 36, 0.08);
-}
-
-.mode-choice input {
-  inline-size: 1px;
-  opacity: 0;
-  padding: 0;
-  position: absolute;
-}
-
 .grid {
   display: grid;
   gap: 12px;
@@ -143,8 +154,40 @@
   grid-template-columns: 1.1fr 0.9fr 0.9fr;
 }
 
-.grid.schedule {
-  grid-template-columns: minmax(180px, 0.9fr) minmax(140px, 0.7fr) minmax(140px, 0.7fr);
+.schedule {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 18px;
+}
+
+/* Поле с подписью слева на одной строке. */
+.field-inline {
+  align-items: center;
+  display: flex;
+  flex-direction: row;
+  gap: 8px;
+  min-width: 0;
+}
+
+.field-inline input {
+  min-width: 0;
+}
+
+.time-input {
+  width: 112px;
+}
+
+/* Быстрые даты — на отдельной строке под полями. */
+.date-links {
+  flex-basis: 100%;
+}
+
+.cap {
+  color: #41514d;
+  font-size: 14px;
+  font-weight: 700;
+  white-space: nowrap;
 }
 
 label {
@@ -173,21 +216,64 @@ label {
   gap: 3px;
 }
 
-.route-grid {
-  align-items: start;
+/* Маршрут: поля + кнопки «Найти» + кнопка обмена в аккуратной сетке.
+   Кнопки поиска и обмена образуют столбцы, обмен — между ними. */
+.route {
+  align-items: center;
+  column-gap: 8px;
   display: grid;
-  gap: 12px;
-  grid-template-columns: minmax(220px, 0.8fr) 42px minmax(220px, 0.8fr);
-  max-width: 980px;
+  grid-template-areas:
+    'ffield ffind swap tfield tfind'
+    'ffav   ffav  .    tfav   tfav';
+  grid-template-columns: 1fr auto auto 1fr auto;
+  row-gap: 6px;
+}
+
+.route__field {
+  align-self: stretch;
+  gap: 0;
+  min-width: 0;
+  position: relative;
+}
+
+.route__field--from {
+  grid-area: ffield;
+}
+
+.route__field--to {
+  grid-area: tfield;
+}
+
+.find-btn--from {
+  grid-area: ffind;
+}
+
+.find-btn--to {
+  grid-area: tfind;
+}
+
+.route__fav--from {
+  grid-area: ffav;
+}
+
+.route__fav--to {
+  grid-area: tfav;
+}
+
+.find-btn {
+  align-self: center;
+  height: 48px;
+  white-space: nowrap;
 }
 
 .swap-button {
-  aspect-ratio: 1;
+  align-self: center;
   background: #f5f8f7;
   border: 1px solid #cfd8d5;
   color: #173d35;
-  justify-self: start;
-  width: 42px;
+  grid-area: swap;
+  height: 32px;
+  width: 40px;
 }
 
 .inline-links {
@@ -213,6 +299,130 @@ label {
   color: #006b5f;
 }
 
+.station-input {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+}
+
+/* Фиксированная ширина подписи — поля «Откуда» и «Куда» одинаковой длины. */
+.station-input .cap {
+  flex: none;
+  width: 62px;
+}
+
+.station-input input {
+  flex: 1;
+}
+
+.station-input .secondary.compact {
+  align-self: stretch;
+  white-space: nowrap;
+}
+
+.station-options {
+  background: #ffffff;
+  border: 1px solid #cfd8d5;
+  border-radius: 7px;
+  box-shadow: 0 12px 28px rgba(18, 41, 36, 0.14);
+  display: flex;
+  flex-direction: column;
+  left: 0;
+  list-style: none;
+  margin: 0;
+  max-height: 220px;
+  overflow-y: auto;
+  padding: 4px;
+  position: absolute;
+  right: 0;
+  top: calc(100% + 4px);
+  z-index: 10;
+}
+
+.station-options button {
+  background: transparent;
+  border: 0;
+  border-radius: 5px;
+  color: #122923;
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  padding: 8px 10px;
+  text-align: left;
+  width: 100%;
+}
+
+.station-options button:hover {
+  background: #eef4f2;
+  color: #006b5f;
+}
+
+.train-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.train-row {
+  align-items: center;
+  border: 1px solid #cfd8d5;
+  border-radius: 8px;
+  column-gap: 12px;
+  cursor: pointer;
+  display: grid;
+  grid-template-columns: auto 64px 1fr auto;
+  padding: 10px 12px;
+  row-gap: 2px;
+}
+
+/* Поезда с местами — зеленоватый текст, выбирать нельзя (мониторить нечего). */
+.train-row.available {
+  border-color: #cbe3d8;
+  color: #1f7d62;
+  cursor: default;
+}
+
+/* Поезда без мест — красноватый текст, их и мониторим. */
+.train-row.soldout {
+  border-color: #ecd2cc;
+  color: #b0493a;
+}
+
+.train-row.soldout.checked {
+  background: #fbf1ef;
+  border-color: #b0493a;
+}
+
+.train-row input[type='checkbox'] {
+  accent-color: #b0493a;
+  height: 18px;
+  margin: 0;
+  min-width: 18px;
+  padding: 0;
+  width: 18px;
+}
+
+.train-row input[type='checkbox']:disabled {
+  cursor: default;
+}
+
+.train-row__num {
+  font-weight: 800;
+}
+
+.train-row__seats {
+  font-size: 13px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.train-row__detail {
+  color: inherit;
+  font-size: 12px;
+  grid-column: 2 / -1;
+  opacity: 0.78;
+}
+
 input {
   background: #fbfdfc;
   border: 1px solid #cfd8d5;
@@ -230,6 +440,35 @@ input:focus {
   outline: 3px solid rgba(0, 134, 116, 0.16);
 }
 
+select {
+  background: #fbfdfc;
+  border: 1px solid #cfd8d5;
+  border-radius: 7px;
+  box-sizing: border-box;
+  color: #122923;
+  cursor: pointer;
+  font: inherit;
+  height: 48px;
+  padding: 0 12px;
+}
+
+select:focus {
+  border-color: #008674;
+  outline: 3px solid rgba(0, 134, 116, 0.16);
+}
+
+.mode-select {
+  align-items: center;
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 10px 14px;
+}
+
+.mode-select select {
+  min-width: 200px;
+}
+
 button {
   align-items: center;
   border-radius: 7px;
@@ -243,19 +482,20 @@ button {
 
 .primary,
 .secondary {
-  border: 0;
   padding: 12px 14px;
 }
 
 .primary {
   background: #006b5f;
+  border: 0;
   color: white;
 }
 
 .secondary {
-  background: #e6f1ee;
+  background: #d4e9e1;
+  border: 1px solid #a4cabd;
   color: #0f463d;
-  margin: 14px 0;
+  margin: 0;
 }
 
 .secondary.compact {
@@ -270,8 +510,10 @@ button {
 }
 
 .primary:disabled {
-  cursor: progress;
-  opacity: 0.65;
+  background: #cdd6d3;
+  color: #7c8784;
+  cursor: not-allowed;
+  opacity: 1;
 }
 
 .icon-button {
@@ -416,11 +658,77 @@ button {
 }
 
 @media (max-width: 620px) {
+  .app-shell {
+    padding: 14px;
+  }
+
   .grid.two,
-  .grid.three,
-  .grid.schedule,
-  .route-grid {
+  .grid.three {
     grid-template-columns: 1fr;
+  }
+
+  /* Маршрут: поля в столбик, кнопки поиска и обмена — колонкой справа,
+     обмен между кнопками поиска с равными небольшими отступами. */
+  .route {
+    grid-template-areas:
+      'ffield ffind'
+      'ffav   swap'
+      'tfield tfind'
+      'tfav   .';
+    grid-template-columns: 1fr auto;
+    row-gap: 6px;
+  }
+
+  /* Кнопка обмена — той же ширины, что кнопки поиска, но заметно ниже,
+     чтобы был зазор сверху и снизу. Поворачиваем только стрелки (значок),
+     а не саму кнопку — иначе её ширина становится высотой и налезает. */
+  .swap-button {
+    height: 26px;
+    width: 48px;
+  }
+
+  .swap-button svg {
+    transform: rotate(90deg);
+  }
+
+  /* Кнопка «Найти» — только значок, квадратная. */
+  .find-btn .btn-text {
+    display: none;
+  }
+
+  .find-btn {
+    padding: 0;
+    width: 48px;
+  }
+
+  /* Дата/с/по: подписи сверху, поля под ними, все три поля в одну строку.
+     Колонка даты — по ширине её содержимого (нативное поле даты не сжимается
+     ниже своего минимума и иначе вылезает на соседнее поле), поля времени делят
+     остаток поровну и могут ужиматься. Так gap между всеми тремя одинаковый. */
+  .schedule {
+    align-items: start;
+    display: grid;
+    gap: 10px;
+    grid-template-columns: max-content minmax(0, 1fr) minmax(0, 1fr);
+  }
+
+  .field-inline {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .schedule input {
+    padding-left: 8px;
+    padding-right: 2px;
+  }
+
+  .time-input {
+    width: auto;
+  }
+
+  .date-links {
+    grid-column: 1 / -1;
   }
 
   .panel {
@@ -429,5 +737,34 @@ button {
 
   .panel__title.split {
     display: grid;
+  }
+
+  .train-row {
+    column-gap: 8px;
+    grid-template-columns: auto auto 1fr auto;
+    padding: 10px;
+  }
+
+  .train-row__time,
+  .train-row__seats {
+    font-size: 13px;
+  }
+}
+
+@media (max-width: 400px) {
+  .app-shell {
+    padding: 10px;
+  }
+
+  .panel {
+    padding: 14px;
+  }
+
+  h1 {
+    font-size: 25px;
+  }
+
+  .train-row__detail {
+    font-size: 11px;
   }
 }

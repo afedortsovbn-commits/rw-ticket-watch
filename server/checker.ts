@@ -1,202 +1,123 @@
-import { execFile } from 'node:child_process'
-import { promisify } from 'node:util'
-import type { CheckResult, WatchTask } from '../shared/types.js'
-
-const ticketSignals = [
-  'Выбрать места',
-  'Выбрать место',
-  'Свободные места',
-  'Свободно мест',
-  'Купить билет',
-  'Оформить заказ',
-]
-const soldOutSignals = ['Мест нет', 'Нет мест', 'Продажа закрыта', 'свободных мест нет']
-const routePageSignals = ['sch-table', 'Маршрут', 'Время отправления', 'Время прибытия', 'Выбрать места', 'Мест нет']
+import type { CheckResult, StationOption, TrainInfo, WatchTask } from '../shared/types.js'
+import { withPassPage } from './browser.js'
 
 type StationSuggestion = {
   value: string
   exp: string
   ecp?: string
+  label?: string
 }
 
-const requestHeaders = {
-  'User-Agent':
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124 Safari/537.36',
-  Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-}
-
-const execFileAsync = promisify(execFile)
-const requestTimeoutMs = 7000
+// Часто используемые станции — чтобы не дёргать автокомплит лишний раз.
 const knownStations: Record<string, StationSuggestion> = {
+  'минск': { value: 'Минск-Пассажирский', exp: '2100001', ecp: '140210' },
   'минск-пассажирский': { value: 'Минск-Пассажирский', exp: '2100001', ecp: '140210' },
+  'брест': { value: 'Брест-Центральный', exp: '2100035', ecp: '130007' },
   'брест-центральный': { value: 'Брест-Центральный', exp: '2100035', ecp: '130007' },
   'гомель': { value: 'Гомель', exp: '2100100', ecp: '150000' },
-  'гомель-пассажирский': { value: 'Гомель-Пассажирский', exp: '2100100', ecp: '150000' },
+  'гомель-пассажирский': { value: 'Гомель', exp: '2100100', ecp: '150000' },
+  'гродно': { value: 'Гродно', exp: '2100070', ecp: '135200' },
+  'витебск': { value: 'Витебск', exp: '2100200', ecp: '160000' },
+  'могилёв': { value: 'Могилев', exp: '2100120', ecp: '155000' },
+  'могилев': { value: 'Могилев', exp: '2100120', ecp: '155000' },
 }
 
-async function normalizePassSearchUrl(rawUrl: string) {
-  const url = new URL(rawUrl)
-
-  if (!url.hostname.endsWith('pass.rw.by') || !url.pathname.includes('/route/')) {
-    return rawUrl
-  }
-
-  for (const field of ['from', 'to'] as const) {
-    const stationName = url.searchParams.get(field)
-    const expParam = `${field}_exp`
-    const esrParam = `${field}_esr`
-    const exp = url.searchParams.get(expParam)
-
-    if (!stationName || (exp && exp !== '0')) {
-      continue
-    }
-
-    const station = await lookupStation(stationName)
-    url.searchParams.set(field, station.value)
-    url.searchParams.set(expParam, station.exp)
-    if (station.ecp) {
-      url.searchParams.set(esrParam, station.ecp)
-    }
-  }
-
-  return url.toString()
+function stationKey(value: string) {
+  return value.trim().toLowerCase()
 }
 
-function normalize(value = '') {
-  return value.trim().replace(/\s+/g, ' ')
+// Запрос к справочнику станций БЖД. Автокомплит требует пройденной JS-проверки,
+// поэтому делаем запрос из контекста уже открытой страницы pass.rw.by.
+async function fetchAutocomplete(query: string): Promise<StationSuggestion[]> {
+  const url = `https://pass.rw.by/ru/ajax/autocomplete/search/?term=${encodeURIComponent(query)}`
+  // Тело evaluate передаём строкой: так esbuild (tsx) не подмешивает в него
+  // хелпер __name, которого нет в контексте страницы.
+  const script = String.raw`(async () => {
+    const response = await fetch(${JSON.stringify(url)}, {
+      headers: { 'X-Requested-With': 'XMLHttpRequest', Accept: 'application/json' },
+    })
+    return response.text()
+  })()`
+  const raw = (await withPassPage('https://pass.rw.by/ru/', (page) =>
+    page.evaluate(script),
+  )) as string
+
+  try {
+    return JSON.parse(raw) as StationSuggestion[]
+  } catch {
+    throw new Error(`Не удалось разобрать справочник станций для "${query}". Попробуйте режим по ссылке.`)
+  }
 }
 
-async function fetchViaPowerShell(url: string, headers: Record<string, string>) {
-  const psUrl = url.replace(/'/g, "''")
-  const psAccept = (headers.Accept ?? headers.accept ?? '*/*').replace(/'/g, "''")
-  const psCookie = (headers.Cookie ?? headers.cookie ?? '').replace(/'/g, "''")
-  const script = [
-    `$Url = '${psUrl}';`,
-    `$Accept = '${psAccept}';`,
-    `$Cookie = '${psCookie}';`,
-    '$ProgressPreference = "SilentlyContinue";',
-    '[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12;',
-    '$headers = @{ "User-Agent" = "Mozilla/5.0"; "Accept" = $Accept; "X-Requested-With" = "XMLHttpRequest" };',
-    'if ($Cookie.Length -gt 0) { $headers["Cookie"] = $Cookie };',
-    '$response = Invoke-WebRequest -UseBasicParsing -Headers $headers -Uri $Url;',
-    'Write-Output $response.Content;',
-  ].join(' ')
-  const { stdout } = await execFileAsync('powershell.exe', ['-NoProfile', '-Command', script], {
-    maxBuffer: 15 * 1024 * 1024,
-    timeout: requestTimeoutMs,
-    windowsHide: true,
-  })
-  return stdout
-}
-
-async function fetchWithRetry(url: string, init: RequestInit = {}, attempts = 1) {
-  let lastError: unknown
-
-  for (let attempt = 1; attempt <= attempts; attempt += 1) {
-    const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), requestTimeoutMs)
-    try {
-      return await fetch(url, { ...init, signal: controller.signal })
-    } catch (error) {
-      lastError = error
-      if (attempt < attempts) {
-        await new Promise((resolve) => setTimeout(resolve, 700 * attempt))
-      }
-    } finally {
-      clearTimeout(timeout)
-    }
+// Поиск вариантов станций для выбора пользователем в панели.
+export async function searchStations(query: string): Promise<StationOption[]> {
+  const term = query.trim()
+  if (!term) {
+    return []
   }
 
-  const message = lastError instanceof Error ? lastError.message : 'неизвестная сетевая ошибка'
-  if (process.platform === 'win32') {
-    const headers = (init.headers as Record<string, string> | undefined) ?? {}
-    try {
-      const text = await fetchViaPowerShell(url, headers)
-      return new Response(text, { status: 200 })
-    } catch {
-      throw new Error(
-        `pass.rw.by не ответил за ${Math.round(requestTimeoutMs / 1000)} секунд. Это похоже на блокировку или зависание соединения, мониторинг продолжит попытки.`,
-      )
-    }
+  const known = knownStations[stationKey(term)]
+  const suggestions = await fetchAutocomplete(term)
+  const options = suggestions
+    .filter((station) => station.value && station.exp)
+    .map((station) => ({
+      value: station.value,
+      exp: station.exp,
+      ecp: station.ecp,
+      label: station.label ?? station.value,
+    }))
+
+  // Если станция есть в локальном словаре, поднимаем её точное совпадение наверх.
+  if (known && !options.some((option) => option.exp === known.exp)) {
+    options.unshift({ value: known.value, exp: known.exp, ecp: known.ecp, label: known.value })
   }
-  throw new Error(`Не удалось подключиться к pass.rw.by после ${attempts} попыток: ${message}`)
-}
-
-function getVerificationCookie(html: string) {
-  if (!html.includes('<title>Verification</title>') && !html.includes('hg-security=')) {
-    return undefined
-  }
-  return html.match(/hg-security=([^;"]+)/)?.[1]
-}
-
-async function fetchTextWithVerificationRetry(url: string, headers: Record<string, string>) {
-  const response = await fetchWithRetry(url, { headers })
-  const text = await response.text()
-  const cookie = getVerificationCookie(text)
-
-  if (!cookie) {
-    return { response, text }
-  }
-
-  const retryResponse = await fetchWithRetry(url, {
-    headers: {
-      ...headers,
-      Cookie: `hg-security=${cookie}`,
-    },
-  })
-  const retryText = await retryResponse.text()
-
-  if (getVerificationCookie(retryText)) {
-    throw new Error('pass.rw.by вернул страницу проверки доступа вместо данных. Откройте сайт БЖД в браузере или попробуйте позже.')
-  }
-
-  return { response: retryResponse, text: retryText }
+  return options
 }
 
 async function lookupStation(query: string): Promise<StationSuggestion> {
-  const known = knownStations[query.trim().toLowerCase()]
+  const known = knownStations[stationKey(query)]
   if (known) {
     return known
   }
 
-  const { response, text: raw } = await fetchTextWithVerificationRetry(
-    `https://pass.rw.by/ru/ajax/autocomplete/search/?term=${encodeURIComponent(query)}`,
-    {
-      ...requestHeaders,
-      Accept: 'application/json,text/javascript,*/*;q=0.8',
-      'X-Requested-With': 'XMLHttpRequest',
-    },
-  )
-
-  if (!response.ok) {
-    throw new Error(`Не удалось найти станцию "${query}": pass.rw.by вернул HTTP ${response.status}`)
-  }
-
-  if (raw.trim().startsWith('<')) {
-    throw new Error(`pass.rw.by вернул страницу проверки вместо справочника станции "${query}". Попробуйте точную ссылку поиска или добавьте станцию в словарь.`)
-  }
-
-  const suggestions = JSON.parse(raw) as StationSuggestion[]
-  const exact = suggestions.find((station) => station.value.toLowerCase() === query.toLowerCase())
+  const suggestions = await fetchAutocomplete(query)
+  const exact = suggestions.find((station) => station.value?.toLowerCase() === query.toLowerCase())
   const station = exact ?? suggestions[0]
-
   if (!station?.exp) {
     throw new Error(`Станция "${query}" не найдена на pass.rw.by`)
   }
-
   return station
 }
 
-async function buildSearchUrl(task: WatchTask) {
+type RouteSource = {
+  searchUrl?: string
+  from?: string
+  to?: string
+  fromExp?: string
+  fromEsr?: string
+  toExp?: string
+  toEsr?: string
+  date: string
+}
+
+type TimeWindow = { timeFrom?: string; timeTo?: string }
+
+async function buildSearchUrl(task: RouteSource): Promise<string> {
   if (task.searchUrl?.trim()) {
-    return normalizePassSearchUrl(task.searchUrl.trim())
+    return task.searchUrl.trim()
   }
 
   if (!task.from || !task.to) {
     throw new Error('Для проверки мест нужен маршрут: станция отправления и станция прибытия.')
   }
 
-  const [fromStation, toStation] = await Promise.all([lookupStation(task.from), lookupStation(task.to)])
+  // Если коды станций уже выбраны в панели — используем их и не дёргаем
+  // автокомплит на каждой проверке.
+  const fromStation: StationSuggestion =
+    task.fromExp ? { value: task.from, exp: task.fromExp, ecp: task.fromEsr } : await lookupStation(task.from)
+  const toStation: StationSuggestion =
+    task.toExp ? { value: task.to, exp: task.toExp, ecp: task.toEsr } : await lookupStation(task.to)
+
   const params = new URLSearchParams()
   params.set('from', fromStation.value)
   params.set('from_exp', fromStation.exp)
@@ -209,78 +130,136 @@ async function buildSearchUrl(task: WatchTask) {
   return `https://pass.rw.by/ru/route/?${params.toString()}`
 }
 
-function stripTags(html: string) {
-  return html
-    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
-    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&quot;/g, '"')
-    .replace(/&#039;/g, "'")
-}
+// Парсинг списка поездов выполняется внутри страницы браузера: так мы читаем
+// итоговый DOM после выполнения скриптов сайта, а не сырой HTML.
+async function parseTrains(sourceUrl: string): Promise<TrainInfo[]> {
+  return withPassPage(sourceUrl, async (page) => {
+    await page
+      .waitForSelector('.sch-table__row-wrap.js-row, .sch-no-results, .train-info-empty', { timeout: 15000 })
+      .catch(() => undefined)
 
-function assertLooksLikeRoutePage(html: string, text: string) {
-  if (routePageSignals.some((signal) => html.includes(signal) || text.includes(signal))) {
-    return
-  }
-
-  if (html.includes('<title>Verification</title>') || html.includes('hg-security=')) {
-    throw new Error('pass.rw.by вернул страницу проверки доступа вместо списка поездов. Мониторинг продолжит попытки.')
-  }
-
-  throw new Error(
-    'Я получил ответ pass.rw.by, но не распознал в нем страницу со списком поездов. Не буду считать это отсутствием мест.',
-  )
-}
-
-function containsTimeWindow(text: string, task: WatchTask) {
-  if (!task.timeFrom && !task.timeTo) {
-    return true
-  }
-  const times = [...text.matchAll(/\b([01]\d|2[0-3]):([0-5]\d)\b/g)].map((match) => match[0])
-  if (times.length === 0) {
-    return true
-  }
-  return times.some((time) => {
-    if (task.timeFrom && time < task.timeFrom) return false
-    if (task.timeTo && time > task.timeTo) return false
-    return true
+    // Тело evaluate — строкой, чтобы tsx/esbuild не ломал его хелпером __name.
+    const script = String.raw`(() => {
+      const clean = (value) => (value || '').replace(/\s+/g, ' ').trim()
+      const rows = Array.from(document.querySelectorAll('.sch-table__row-wrap.js-row'))
+      return rows.map((row) => {
+        const places = Array.from(row.querySelectorAll('.sch-table__t-item.has-quant'))
+          .map((node) => clean(node.textContent))
+          .filter(Boolean)
+          .join('; ')
+        return {
+          number: clean(row.querySelector('.train-number') ? row.querySelector('.train-number').textContent : ''),
+          departure: clean(row.querySelector('.train-from-time') ? row.querySelector('.train-from-time').textContent : ''),
+          arrival: clean(row.querySelector('.train-to-time') ? row.querySelector('.train-to-time').textContent : ''),
+          hasPlaces: row.classList.contains('w_places'),
+          places,
+        }
+      })
+    })()`
+    const parsed = (await page.evaluate(script)) as Omit<TrainInfo, 'freeSeats'>[]
+    return parsed.map((train) => ({ ...train, freeSeats: sumSeats(train.places) }))
   })
+}
+
+// В каждой записи вида "Плацкартный 39 28,92 BYN" первое число — количество мест.
+function sumSeats(places: string): number {
+  return places.split(';').reduce((sum, part) => {
+    const match = part.match(/\d+/)
+    return sum + (match ? Number(match[0]) : 0)
+  }, 0)
+}
+
+function normalizeTrainNumber(value: string) {
+  return value.replace(/\s+/g, '').toUpperCase()
+}
+
+function wantedTrainNumbers(task: WatchTask) {
+  if (task.trainNumbers?.length) return task.trainNumbers
+  if (task.trainNumber) return [task.trainNumber]
+  return []
+}
+
+function matchesTrainFilter(train: TrainInfo, task: WatchTask) {
+  const wanted = wantedTrainNumbers(task)
+  if (wanted.length === 0) return true
+  return wanted.some((number) => normalizeTrainNumber(train.number).includes(normalizeTrainNumber(number)))
+}
+
+function matchesTimeWindow(train: TrainInfo, window: TimeWindow) {
+  const time = train.departure
+  if (!/^\d{1,2}:\d{2}$/.test(time)) return true
+  if (window.timeFrom && time < window.timeFrom) return false
+  if (window.timeTo && time > window.timeTo) return false
+  return true
+}
+
+function describeTrain(train: TrainInfo) {
+  const places = train.places ? `, ${train.places}` : ''
+  return `${train.number} ${train.departure}-${train.arrival}${places}`
+}
+
+// Текущие дата и время в часовом поясе Минска (БЖД показывает местное время).
+function minskNowParts() {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Europe/Minsk',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).formatToParts(new Date())
+  const get = (type: string) => parts.find((part) => part.type === type)?.value ?? ''
+  return { date: `${get('year')}-${get('month')}-${get('day')}`, time: `${get('hour')}:${get('minute')}` }
+}
+
+function isFutureDeparture(date: string, departure: string, now = minskNowParts()) {
+  if (!/^\d{1,2}:\d{2}$/.test(departure)) return true // время не распознали — не отсекаем
+  if (date > now.date) return true
+  if (date < now.date) return false
+  return departure > now.time
+}
+
+// Список поездов для выбора в панели: рейсы маршрута в заданном окне времени,
+// у которых отправление ещё не прошло.
+export async function previewTrains(input: RouteSource & TimeWindow): Promise<TrainInfo[]> {
+  const sourceUrl = await buildSearchUrl(input)
+  const trains = await parseTrains(sourceUrl)
+  const now = minskNowParts()
+  return trains.filter(
+    (train) => matchesTimeWindow(train, input) && isFutureDeparture(input.date, train.departure, now),
+  )
 }
 
 export async function checkTickets(task: WatchTask): Promise<CheckResult> {
   const sourceUrl = await buildSearchUrl(task)
-  const { response, text: html } = await fetchTextWithVerificationRetry(sourceUrl, requestHeaders)
+  const allTrains = await parseTrains(sourceUrl)
+  const checkedAt = new Date().toISOString()
 
-  if (!response.ok) {
-    if (response.status === 403) {
-      throw new Error(
-        'pass.rw.by сейчас отклонил автоматическую проверку с HTTP 403. Это похоже на временную защиту сайта, а не на ошибку маршрута. Мониторинг продолжит попытки; если 403 повторяется постоянно, нужен локальный браузерный режим.',
-      )
-    }
-    throw new Error(`pass.rw.by вернул HTTP ${response.status}`)
+  const matched = allTrains.filter((train) => matchesTrainFilter(train, task) && matchesTimeWindow(train, task))
+  const withPlaces = matched.filter((train) => train.hasPlaces)
+  const hasTickets = withPlaces.length > 0
+
+  let message: string
+  if (hasTickets) {
+    message = `Есть места: ${withPlaces.map(describeTrain).join(' | ')}`
+  } else if (allTrains.length === 0) {
+    message = 'На странице маршрута не нашлось ни одного поезда на эту дату.'
+  } else if (matched.length === 0) {
+    const wanted = wantedTrainNumbers(task)
+    message = wanted.length
+      ? `Поезд${wanted.length > 1 ? 'а' : ''} ${wanted.join(', ')} не найден${wanted.length > 1 ? 'ы' : ''} среди ${allTrains.length} рейсов на эту дату/время.`
+      : 'Поездов под заданное время отправления не нашлось.'
+  } else {
+    message = `Мест пока нет (проверено рейсов: ${matched.length}).`
   }
-
-  const text = normalize(stripTags(html))
-  assertLooksLikeRoutePage(html, text)
-
-  const matches = ticketSignals.filter((signal) => text.includes(signal))
-  const soldOutMatches = soldOutSignals.filter((signal) => text.includes(signal))
-  const trainMatches = task.trainNumber && text.includes(task.trainNumber) ? [task.trainNumber] : []
-  const trainMatchesFilter = !task.trainNumber || trainMatches.length > 0
-  const hasTickets = matches.length > 0 && trainMatchesFilter && containsTimeWindow(text, task)
 
   return {
     hasTickets,
     sourceUrl,
-    checkedAt: new Date().toISOString(),
-    matches: [...matches, ...trainMatches],
-    message: hasTickets
-      ? 'Похоже, появились доступные места.'
-      : task.trainNumber && trainMatches.length === 0
-        ? `На странице маршрута не найден поезд ${task.trainNumber}. Проверьте номер поезда или направление.`
-      : soldOutMatches.length > 0
-        ? 'Мест пока нет.'
-        : 'Я проверил страницу, но явного сигнала наличия мест не нашел.',
+    checkedAt,
+    matches: withPlaces.map((train) => train.number),
+    trains: matched,
+    message,
   }
 }

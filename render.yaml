@@ -3,7 +3,7 @@ services:
     name: rw-ticket-watch
     env: node
     plan: free
-    buildCommand: npm ci && npm run build
+    buildCommand: npm ci && npx playwright install --with-deps chromium && npm run build
     startCommand: npm start
     envVars:
       - key: NODE_ENV
@@ -11,7 +11,11 @@ services:
       - key: PORT
         value: 4174
       - key: CHECK_INTERVAL_MS
-        value: 3000
+        value: 180000
+      - key: CHECK_JITTER_MS
+        value: 45000
+      - key: MAX_CHECKS_PER_TASK
+        value: 0
       - key: TELEGRAM_MIN_INTERVAL_MS
         value: 60000
       - key: TELEGRAM_BOT_TOKEN

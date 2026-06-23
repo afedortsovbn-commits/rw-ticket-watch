@@ -13,6 +13,8 @@ dist-ssr
 *.local
 .env
 data/*.json
+data/browser-profile
+probe_*.mjs
 
 # Editor directories and files
 .vscode/*
