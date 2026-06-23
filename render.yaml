@@ -1,15 +1,23 @@
 services:
   - type: web
     name: rw-ticket-watch
-    env: node
-    plan: free
-    buildCommand: npm ci && npx playwright install --with-deps chromium && npm run build
-    startCommand: npm start
+    # Деплой через Docker: образ Playwright уже содержит Chromium и системные
+    # библиотеки — это надёжнее, чем ставить браузер в нативной сборке.
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    # ВАЖНО: нужен платный always-on тариф. На free-плане сервис засыпает после
+    # 15 минут простоя, и фоновый мониторинг останавливается.
+    plan: starter
+    autoDeploy: true
+    # Постоянный диск, чтобы задача мониторинга и cookies браузера переживали
+    # передеплои/рестарты (иначе файловая система Render сбрасывается).
+    disk:
+      name: data
+      mountPath: /app/data
+      sizeGB: 1
     envVars:
       - key: NODE_ENV
         value: production
-      - key: PORT
-        value: 4174
       - key: CHECK_INTERVAL_MS
         value: 180000
       - key: CHECK_JITTER_MS
@@ -18,7 +26,12 @@ services:
         value: 0
       - key: TELEGRAM_MIN_INTERVAL_MS
         value: 60000
+      # Секреты задаются в дашборде Render (Environment), не в репозитории.
       - key: TELEGRAM_BOT_TOKEN
         sync: false
       - key: TELEGRAM_CHAT_ID
+        sync: false
+      - key: AUTH_LOGIN
+        value: Fedortsov
+      - key: AUTH_PASSWORD
         sync: false
