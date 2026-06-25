@@ -252,6 +252,12 @@ label {
   grid-area: tfind;
 }
 
+/* Быстрый выбор — под полем ввода, а не под подписью: сдвигаем на ширину
+   подписи (62px) + отступ (8px). */
+.route__fav {
+  padding-left: 70px;
+}
+
 .route__fav--from {
   grid-area: ffav;
 }
