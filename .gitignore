@@ -26,3 +26,4 @@ probe_*.mjs
 *.njsproj
 *.sln
 *.sw?
+_*.mjs
