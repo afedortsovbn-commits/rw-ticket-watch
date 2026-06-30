@@ -44,7 +44,17 @@ type FormState = {
 
 type StationField = 'from' | 'to'
 
-const stationFavorites = ['Гомель', 'Минск-Пассажирский']
+const primaryFavorites: StationOption[] = [
+  { value: 'Гомель', exp: '2100100', ecp: '150000' },
+  { value: 'Минск-Пассажирский', exp: '2100001', ecp: '140210' },
+]
+// Остальные областные центры — раскрываются по кнопке «Ещё».
+const moreFavorites: StationOption[] = [
+  { value: 'Брест-Центральный', exp: '2100035', ecp: '130007' },
+  { value: 'Витебск', exp: '2100200', ecp: '160000' },
+  { value: 'Гродно', exp: '2100070', ecp: '135208' },
+  { value: 'Могилев', exp: '2100120', ecp: '155000' },
+]
 
 function localDate(offsetDays = 0) {
   const date = new Date()
@@ -229,6 +239,7 @@ function Dashboard() {
   const [previewTrains, setPreviewTrains] = useState<TrainInfo[]>([])
   const [selectedTrains, setSelectedTrains] = useState<string[]>([])
   const [previewBusy, setPreviewBusy] = useState(false)
+  const [favExpanded, setFavExpanded] = useState<Record<StationField, boolean>>({ from: false, to: false })
 
   const runningTasks = useMemo(
     () => tasks.filter((task) => task.status === 'active' || task.status === 'paused' || task.status === 'found'),
@@ -293,10 +304,6 @@ function Dashboard() {
   function changeStation(field: StationField, value: string) {
     updateForm(field === 'from' ? { from: value, fromExp: '', fromEsr: '' } : { to: value, toExp: '', toEsr: '' })
     setStationOptions((current) => ({ ...current, [field]: [] }))
-  }
-
-  function setStation(field: StationField, station: string) {
-    changeStation(field, station)
   }
 
   function swapStations() {
@@ -428,11 +435,26 @@ function Dashboard() {
           <span className="btn-text">{loading ? 'Ищу…' : 'Найти'}</span>
         </button>
         <span className={`inline-links route__fav route__fav--${field}`}>
-          {stationFavorites.map((station) => (
-            <button key={`${field}-${station}`} type="button" onClick={() => setStation(field, station)}>
-              {stationShortName(station)}
+          {primaryFavorites.map((option) => (
+            <button key={`${field}-${option.exp}`} type="button" onClick={() => pickStation(field, option)}>
+              {stationShortName(option.value)}
             </button>
           ))}
+          {favExpanded[field] ? (
+            moreFavorites.map((option) => (
+              <button key={`${field}-${option.exp}`} type="button" onClick={() => pickStation(field, option)}>
+                {stationShortName(option.value)}
+              </button>
+            ))
+          ) : (
+            <button
+              type="button"
+              className="more-link"
+              onClick={() => setFavExpanded((current) => ({ ...current, [field]: true }))}
+            >
+              Ещё
+            </button>
+          )}
         </span>
       </>
     )
@@ -533,13 +555,19 @@ function Dashboard() {
         </div>
       </section>
 
-      <section className="panel main-panel">
-        {(previewBusy || stationBusy) && (
-          <div className="notice loading">
-            <span className="spinner" aria-hidden="true" />
-            Запрашиваю данные у pass.rw.by — это занимает несколько секунд…
+      {(previewBusy || stationBusy) && (
+        <div className="overlay">
+          <div className="overlay__card">
+            <span className="spinner spinner--lg" aria-hidden="true" />
+            <p>
+              Запрашиваю данные у pass.rw.by
+              <span className="overlay__hint">это занимает несколько секунд…</span>
+            </p>
           </div>
-        )}
+        </div>
+      )}
+
+      <section className="panel main-panel">
         {message && <div className="notice">{message}</div>}
 
         {runningTask ? (

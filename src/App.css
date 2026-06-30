@@ -82,13 +82,42 @@
   text-align: center;
 }
 
-.notice.loading {
+/* Модальный индикатор поверх всего окна: затемняет/осветляет фон и блокирует
+   взаимодействие, пока идёт запрос. */
+.overlay {
   align-items: center;
-  background: #eaf4f0;
-  border-color: #bcdcd0;
-  color: #0f463d;
+  background: rgba(238, 243, 241, 0.72);
   display: flex;
-  gap: 10px;
+  inset: 0;
+  justify-content: center;
+  position: fixed;
+  z-index: 50;
+}
+
+.overlay__card {
+  align-items: center;
+  background: #ffffff;
+  border-radius: 12px;
+  box-shadow: 0 18px 50px rgba(18, 41, 36, 0.22);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  max-width: 320px;
+  padding: 26px 30px;
+  text-align: center;
+}
+
+.overlay__card p {
+  color: #122923;
+  font-weight: 700;
+}
+
+.overlay__hint {
+  color: #64716d;
+  display: block;
+  font-size: 13px;
+  font-weight: 500;
+  margin-top: 4px;
 }
 
 .spinner {
@@ -99,6 +128,12 @@
   flex: none;
   height: 16px;
   width: 16px;
+}
+
+.spinner--lg {
+  border-width: 4px;
+  height: 42px;
+  width: 42px;
 }
 
 @keyframes spin {
