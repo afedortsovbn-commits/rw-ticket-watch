@@ -57,22 +57,13 @@ async function notifyFound(task: WatchTask) {
   await sendTelegramMessage(text)
 }
 
-function delay(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms))
-}
-
 async function notifyFoundAndComplete(task: WatchTask) {
   if ((task.foundNotificationCount ?? 0) >= 1) {
     return
   }
 
-  // Несколько сообщений подряд с короткой задержкой — чтобы телефон ощутимо
-  // повибрировал и пользователь точно заметил. Первое полное, остальные краткие.
+  // Одно сообщение: Telegram всё равно не повторяет вибрацию для серии подряд.
   await notifyFound(task)
-  await delay(500)
-  await sendTelegramMessage('🔔🔔 Появились места БЖД — проверьте!')
-  await delay(500)
-  await sendTelegramMessage('🔔 Напоминание: места появились!')
 
   const now = new Date().toISOString()
   await updateTask(task.id, {
